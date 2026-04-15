@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ifcurl"
+version = "0.0.0"
+authors = [
+  { name="Bruno Postle", email="bruno@postle.net" },
+]
+description = "Resolve and render ifc:// URLs pointing to IFC models in git repositories"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+keywords = ["IFC", "BIM", "URL"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+]
+dependencies = ["ifcopenshell", "gitpython", "platformdirs"]
+
+[project.optional-dependencies]
+render = ["pyvista", "numpy"]
+
+[project.scripts]
+ifcurl = "ifcurl.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/brunopostle/ifcurl"
+Issues = "https://github.com/brunopostle/ifcurl/issues"
+
+[tool.setuptools.packages.find]
+include = ["ifcurl*"]
+exclude = ["test*"]
+
+[tool.setuptools.package-data]
+ifcurl = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+preview = true
+select = [
+    "E9",   # io errors
+    "FA",   # future annotations
+    "UP",   # pyupgrade
+    "I",    # import sorting
+    "RUF015",
+    "RUF022",
+]
+ignore = [
+    "UP007",  # Optional to X | Y
+    "UP045",  # Optional to X | None
+    "UP015",  # Unnecessary mode argument
+    "UP028",  # yield for -> yield from
+    "UP030",  # implicit references for positional format fields
+    "UP031",  # Replace % with .format
+    "UP032",  # Replace .format with f-string
+]
