@@ -1,13 +1,13 @@
 services:
-  gitea:
-    image: docker.io/gitea/gitea:latest
-    container_name: ifcurl-gitea
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:10
+    container_name: ifcurl-forgejo
     restart: unless-stopped
     ports:
       - "3000:3000"   # web UI
       - "2222:22"     # SSH (avoids conflict with host sshd on 22)
     volumes:
-      - gitea-data:/data
+      - forgejo-data:/data
     environment:
       # Run the container process as the current host user so files in the
       # volume are owned by you, not root.
@@ -22,7 +22,7 @@ services:
       GITEA__database__DB_TYPE: sqlite3
       GITEA__database__PATH: /data/gitea/gitea.db
 
-      # Server: tell Gitea its own public URL so clone URLs are correct.
+      # Server: tell Forgejo its own public URL so clone URLs are correct.
       GITEA__server__HTTP_PORT: "3000"
       GITEA__server__ROOT_URL: "http://localhost:3000"
       GITEA__server__SSH_PORT: "2222"
@@ -32,16 +32,16 @@ services:
       GITEA__log__LEVEL: Warn
 
 volumes:
-  gitea-data:
-    name: ifcurl-gitea-data
+  forgejo-data:
+    name: ifcurl-forgejo-data
 
 # Usage:
-#   podman-compose up -d          start Gitea
-#   podman-compose down           stop (data preserved)
-#   podman-compose down -v        stop and wipe all data
+#   podman-compose up -d            start Forgejo
+#   podman-compose down             stop (data preserved)
+#   podman-compose down -v          stop and wipe all data
 #
 # On first run, create an admin user:
-#   podman exec --user git ifcurl-gitea gitea admin user create \
+#   podman exec --user git ifcurl-forgejo forgejo admin user create \
 #       --username admin --password admin1234 --email admin@localhost \
 #       --admin --must-change-password=false
 #
