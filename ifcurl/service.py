@@ -50,6 +50,7 @@ from platformdirs import user_cache_dir
 from pydantic import BaseModel
 
 from ifcurl import render as render_mod
+from ifcurl.auth import get_token_for_host
 from ifcurl.git import fetch_ifc
 from ifcurl.url import IfcUrl
 
@@ -173,6 +174,13 @@ def _load_model(ifc_bytes: bytes) -> ifcopenshell.file:
 
 class PreviewRequest(BaseModel):
     url: str
+    token: str | None = None
+    """Optional bearer token for git authentication.
+
+    When provided, takes precedence over any token configured in
+    ``~/.config/ifcurl/tokens.json``.  Intended for co-located Gitea
+    deployments that pass the requesting user's session token.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -201,9 +209,14 @@ def preview(request: PreviewRequest) -> Response:
         if cached_png is not None:
             return Response(content=cached_png, media_type="image/png")
 
+    # --- Resolve authentication token ---
+    token = request.token
+    if token is None and ifc_url.host:
+        token = get_token_for_host(ifc_url.host)
+
     # --- Fetch IFC bytes + commit hexsha ---
     try:
-        hexsha, ifc_bytes = fetch_ifc(ifc_url)
+        hexsha, ifc_bytes = fetch_ifc(ifc_url, token=token)
     except ImportError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:

@@ -8,8 +8,6 @@ A single URL encodes the model source (git host, repository, ref), an optional e
 ifcurl render "ifc://github.com/brunopostle/simple-ifc@heads/main?path=_test_simple.ifc"
 ```
 
-![Example render](https://raw.githubusercontent.com/brunopostle/simple-ifc/main/_test_simple.png)
-
 ---
 
 ## URL format
@@ -102,35 +100,36 @@ ifcurl render "ifc://..." -o output.png
 ## Installation
 
 ```bash
-pip install ifcurl
-```
-
-For rendering support (required for `ifcurl render`):
-
-```bash
-pip install "ifcurl[render]"
+pip install "ifcurl[render]"    # CLI rendering tool
+pip install "ifcurl[service]"   # preview service (includes render)
 ```
 
 **Dependencies:**
 
 - [ifcopenshell](https://ifcopenshell.org) — IFC parsing and selector execution
 - [GitPython](https://gitpython.readthedocs.io) — git repository access
-- [platformdirs](https://platformdirs.readthedocs.io) — OS-appropriate cache directory
-- [pyvista](https://pyvista.org) + [numpy](https://numpy.org) — 3D rendering (optional, required for `render`)
+- [platformdirs](https://platformdirs.readthedocs.io) — OS-appropriate cache and config directories
+- [pyvista](https://pyvista.org) + [numpy](https://numpy.org) — 3D rendering (`[render]` and `[service]` extras)
+- [FastAPI](https://fastapi.tiangolo.com) + [uvicorn](https://www.uvicorn.org) — HTTP service (`[service]` extra)
 
 ---
 
 ## Python library
 
 ```python
-from ifcurl import IfcUrl, fetch_ifc_bytes
+from ifcurl import IfcUrl, fetch_ifc
+from ifcurl import render as render_mod
 import ifcopenshell
 import tempfile, os
-from ifcurl import render
 
-url = IfcUrl.parse("ifc://github.com/brunopostle/simple-ifc@heads/main?path=_test_simple.ifc&selector=IfcWall&visibility=ghost")
+url = IfcUrl.parse(
+    "ifc://github.com/brunopostle/simple-ifc@heads/main"
+    "?path=_test_simple.ifc&selector=IfcWall&visibility=ghost"
+)
 
-ifc_bytes = fetch_ifc_bytes(url)
+# fetch_ifc returns (commit_hexsha, ifc_bytes) — the hexsha is useful
+# as a cache key even when the URL uses a mutable ref like a branch
+hexsha, ifc_bytes = fetch_ifc(url)
 
 tmp_fd, tmp_path = tempfile.mkstemp(suffix=".ifc")
 os.write(tmp_fd, ifc_bytes)
@@ -138,7 +137,7 @@ os.close(tmp_fd)
 model = ifcopenshell.open(tmp_path)
 os.unlink(tmp_path)
 
-png_bytes = render.render(
+png_bytes = render_mod.render(
     model,
     selector=url.selector,
     camera=url.camera,
@@ -159,7 +158,6 @@ with open("output.png", "wb") as f:
 ifcurl includes an HTTP preview service for use by Gitea and other consumers.
 
 ```bash
-pip install "ifcurl[service]"
 ifcurl serve                          # 127.0.0.1:8000
 ifcurl serve --host 0.0.0.0 --port 9000
 ```
@@ -170,10 +168,27 @@ ifcurl serve --host 0.0.0.0 --port 9000
 POST /preview
 Content-Type: application/json
 
-{"url": "ifc://..."}
+{"url": "ifc://...", "token": "optional-git-token"}
 ```
 
 Returns `image/png`.
+
+The optional `token` field is a bearer token for git authentication. When provided it takes precedence over any token in the config file. Intended for co-located Gitea deployments that pass the requesting user's session token.
+
+### Authentication
+
+For private repositories, configure a token per host in `~/.config/ifcurl/tokens.json` (Linux/macOS) or `%APPDATA%\ifcurl\tokens.json` (Windows):
+
+```json
+{
+    "hosts": {
+        "github.com": "ghp_your_token_here",
+        "gitlab.example.com": "glpat_your_token_here"
+    }
+}
+```
+
+Tokens are injected into HTTPS remote URLs (`https://<token>@host/path`) for clone and fetch operations and are never written to the on-disk git config. SSH transport uses the platform key store and ignores this config.
 
 ### Service caching
 
@@ -198,7 +213,7 @@ Remote repositories are cloned as bare repos to the OS cache directory (`~/.cach
 ```bash
 git clone https://github.com/brunopostle/ifcurl
 cd ifcurl
-pip install -e ".[render]"
+pip install -e ".[service]"
 python -m pytest tests/
 ```
 

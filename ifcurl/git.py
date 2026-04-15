@@ -19,9 +19,15 @@
 """Fetch IFC file bytes from a git repository described by an IfcUrl.
 
 Remote repositories are cloned as bare repos to a per-URL cache directory
-under ~/.cache/ifcurl/.  Mutable refs (HEAD, branches) trigger a fetch on
-each call to pick up upstream changes; immutable refs (commit hashes, tags)
+under the OS cache directory.  Mutable refs (HEAD, branches) trigger a fetch
+on each call to pick up upstream changes; immutable refs (commit hashes, tags)
 reuse the cached clone without fetching.
+
+Authentication
+--------------
+Pass a *token* string to inject it into HTTPS remote URLs as a credential.
+SSH transport uses the platform key store and ignores the token.
+See :mod:`ifcurl.auth` for loading tokens from the config file.
 """
 
 from __future__ import annotations
@@ -46,13 +52,15 @@ except ImportError:
 from ifcurl.url import IfcUrl
 
 
-def fetch_ifc(ifc_url: IfcUrl) -> tuple[str, bytes]:
+def fetch_ifc(ifc_url: IfcUrl, token: str | None = None) -> tuple[str, bytes]:
     """Return ``(commit_hexsha, ifc_bytes)`` for the file addressed by *ifc_url*.
 
     The commit hexsha is the resolved, immutable identifier for the ref —
     useful as a cache key even when the URL uses a mutable ref like a branch.
 
     :param ifc_url: A parsed :class:`IfcUrl`.
+    :param token: Optional bearer token for HTTPS authentication.  Injected
+        as ``https://<token>@host/path``.  Ignored for SSH and local repos.
     :raises ImportError: If GitPython is not installed.
     :raises ValueError: If ``ifc_url.path`` is unset, the repo cannot be
         reached, or the file is not found at the specified ref.
@@ -62,19 +70,20 @@ def fetch_ifc(ifc_url: IfcUrl) -> tuple[str, bytes]:
     if ifc_url.path is None:
         raise ValueError("URL has no 'path' parameter — cannot fetch IFC file")
 
-    repo = _get_repo(ifc_url)
+    repo = _get_repo(ifc_url, token=token)
     return _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
 
 
-def fetch_ifc_bytes(ifc_url: IfcUrl) -> bytes:
+def fetch_ifc_bytes(ifc_url: IfcUrl, token: str | None = None) -> bytes:
     """Return the raw bytes of the IFC file addressed by *ifc_url*.
 
     :param ifc_url: A parsed :class:`IfcUrl`.
+    :param token: Optional bearer token for HTTPS authentication.
     :raises ImportError: If GitPython is not installed.
     :raises ValueError: If ``ifc_url.path`` is unset, the repo cannot be
         reached, or the file is not found at the specified ref.
     """
-    _, data = fetch_ifc(ifc_url)
+    _, data = fetch_ifc(ifc_url, token=token)
     return data
 
 
@@ -83,11 +92,11 @@ def fetch_ifc_bytes(ifc_url: IfcUrl) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def _get_repo(ifc_url: IfcUrl) -> git.Repo:
+def _get_repo(ifc_url: IfcUrl, token: str | None = None) -> git.Repo:
     """Open or fetch the repository for *ifc_url*."""
     if ifc_url.transport == "local":
         return _open_local(ifc_url.repo_path)
-    return _open_remote(ifc_url.git_remote_url(), ifc_url.is_mutable_ref())
+    return _open_remote(ifc_url.git_remote_url(), ifc_url.is_mutable_ref(), token=token)
 
 
 def _open_local(repo_path: str) -> git.Repo:
@@ -107,6 +116,9 @@ def _cache_dir_for(remote_url: str) -> Path:
       Linux   ~/.cache/ifcurl/<hash>
       macOS   ~/Library/Caches/ifcurl/<hash>
       Windows %LOCALAPPDATA%\\ifcurl\\Cache\\<hash>
+
+    The cache key is derived from the clean URL without any token so the same
+    cached clone is shared regardless of which credential was used to fetch it.
     """
     url_hash = hashlib.sha256(remote_url.encode()).hexdigest()[:24]
     cache_dir = Path(user_cache_dir("ifcurl")) / url_hash
@@ -114,28 +126,45 @@ def _cache_dir_for(remote_url: str) -> Path:
     return cache_dir
 
 
-def _open_remote(remote_url: str, is_mutable: bool) -> git.Repo:
+def _auth_url(remote_url: str, token: str | None) -> str:
+    """Return *remote_url* with the token injected, or the original URL."""
+    if token and remote_url.startswith("https://"):
+        from ifcurl.auth import inject_token
+        return inject_token(remote_url, token)
+    return remote_url
+
+
+def _open_remote(remote_url: str, is_mutable: bool, token: str | None = None) -> git.Repo:
     """Return a GitPython Repo for *remote_url*, cloning it if necessary.
 
-    Bare clones are stored under ~/.cache/ifcurl/<url-hash>.  For mutable refs
-    (branches, HEAD) the remote is fetched on every call so the cache stays
-    current.  Immutable refs (commit hashes, tags) skip the fetch.
+    Bare clones are stored under the OS cache dir keyed on the clean URL.
+    For mutable refs (branches, HEAD) the remote is fetched on every call.
+    Immutable refs (commit hashes, tags) skip the fetch.
+
+    If *token* is provided it is injected into the HTTPS URL for clone and
+    fetch operations but is never written to the on-disk git config.
     """
     cache_dir = _cache_dir_for(remote_url)
     git_dir = cache_dir / "repo.git"
+    auth = _auth_url(remote_url, token)
 
     if not git_dir.exists():
         try:
-            repo = git.Repo.clone_from(remote_url, str(git_dir), bare=True)
+            repo = git.Repo.clone_from(auth, str(git_dir), bare=True)
         except git.exc.GitCommandError as exc:
             raise ValueError(f"Failed to clone {remote_url!r}: {exc.stderr.strip()}") from exc
     else:
         repo = git.Repo(str(git_dir))
         if is_mutable:
             try:
-                repo.git.fetch("origin")
+                if auth != remote_url:
+                    # Fetch from the authenticated URL directly so the token
+                    # is never stored in the repo config.
+                    repo.git.fetch(auth, "+refs/*:refs/*")
+                else:
+                    repo.git.fetch("origin")
             except git.exc.GitCommandError:
-                pass  # offline or no remote — use cached data
+                pass  # offline — use cached data
 
     return repo
 
