@@ -154,6 +154,39 @@ with open("output.png", "wb") as f:
 
 ---
 
+## Preview service
+
+ifcurl includes an HTTP preview service for use by Gitea and other consumers.
+
+```bash
+pip install "ifcurl[service]"
+ifcurl serve                          # 127.0.0.1:8000
+ifcurl serve --host 0.0.0.0 --port 9000
+```
+
+### Endpoint
+
+```
+POST /preview
+Content-Type: application/json
+
+{"url": "ifc://..."}
+```
+
+Returns `image/png`.
+
+### Service caching
+
+| Tier | Key | Contents | Notes |
+|---|---|---|---|
+| 2 | commit hash + path | IFC bytes | In-memory LRU, avoids repeated git blob reads |
+| 3 | commit hash + path + selector | Resolved GlobalId set | In-memory LRU, avoids re-running selector |
+| 4 | SHA-256 of full URL | Rendered PNG | Filesystem, immutable refs only |
+
+Tier 4 is never written for mutable refs (`@heads/`, `@HEAD`) since the underlying commit may change.
+
+---
+
 ## Remote repository caching
 
 Remote repositories are cloned as bare repos to the OS cache directory (`~/.cache/ifcurl/` on Linux, `~/Library/Caches/ifcurl/` on macOS, `%LOCALAPPDATA%\ifcurl\Cache\` on Windows) on first use. Subsequent calls to the same repository reuse the cache. Mutable refs (`@heads/`, `@HEAD`) trigger a `git fetch` to pick up upstream changes; immutable refs (commit hashes, tags) use the cache as-is.

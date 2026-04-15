@@ -29,25 +29,95 @@ from ifcurl import render as render_mod
 from ifcurl.git import fetch_ifc_bytes
 from ifcurl.url import IfcUrl
 
+_URL_FORMAT = """
+URL format:
+  ifc://[user@]host/org/repo@<ref>?<parameters>
+
+Transport is inferred from the URL structure:
+  ifc://host/org/repo          HTTPS
+  ifc://git@host/org/repo      SSH
+  ifc:///path/to/repo          local file
+
+Ref forms:
+  @heads/<branch>              branch tip  (e.g. @heads/main)
+  @tags/<name>                 tag         (e.g. @tags/v1.0)
+  @<hash>                      commit hash (e.g. @abc123def)
+  @HEAD                        default branch
+
+Parameters (all optional):
+  path=<file>                  path to the IFC file within the repository
+  selector=<expr>              IfcOpenShell selector (see docs.ifcopenshell.org)
+  camera=px,py,pz,dx,dy,dz,ux,uy,uz   camera in IFC world coordinates
+  fov=<degrees>                perspective field of view (use with camera)
+  scale=<value>                orthographic scale (use with camera)
+  clip=px,py,pz,nx,ny,nz      clipping plane, normal toward visible side (repeatable)
+  visibility=highlight|ghost|isolate   default: highlight
+"""
+
+_RENDER_EXAMPLES = """
+examples:
+  ifcurl render "ifc://github.com/org/repo@heads/main?path=model.ifc"
+  ifcurl render "ifc://github.com/org/repo@heads/main?path=model.ifc&selector=IfcWall&visibility=ghost" -o walls.png
+  ifcurl render "ifc://git@example.com/org/repo@abc123?path=model.ifc&camera=10,20,5,0,-1,0,0,0,1&fov=60"
+  ifcurl render "ifc:///home/alice/project@HEAD?path=model.ifc&camera=0,0,8,0,0,-1,0,1,0&scale=50&clip=0,0,3,0,0,-1"
+"""
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="ifcurl",
-        description="Resolve and render ifc:// URLs pointing to IFC models in git repositories",
+        description=(
+            "Fetch and render IFC building models addressed by ifc:// URLs.\n"
+            "An ifc:// URL encodes a git source, an optional element selector,\n"
+            "and an optional camera viewpoint."
+        ),
+        epilog=_URL_FORMAT,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command")
 
-    render_parser = subparsers.add_parser("render", help="Render an ifc:// URL to a PNG image")
+    render_parser = subparsers.add_parser(
+        "render",
+        help="Render an ifc:// URL to a PNG image",
+        description=(
+            "Fetch an IFC model from a git repository via an ifc:// URL and render it\n"
+            "to a PNG image. The selector, camera, clipping planes, and visibility mode\n"
+            "are all taken from the URL parameters."
+        ),
+        epilog=_URL_FORMAT + _RENDER_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     render_parser.add_argument("url", help="The ifc:// URL to render")
     render_parser.add_argument(
         "-o", "--output", default="", metavar="FILE",
         help="Output PNG path (default: ifc-url-render.png)",
     )
 
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Start the ifcurl preview HTTP service",
+        description=(
+            "Start an HTTP service that renders ifc:// URLs to PNG images on demand.\n"
+            "Accepts POST /preview with a JSON body {\"url\": \"ifc://...\"} and returns image/png.\n"
+            "Results are cached: mutable refs (branches, HEAD) are cached in memory;\n"
+            "immutable refs (commit hashes, tags) are also cached to disk."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+
+    # Print help when called with no arguments
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
     args = parser.parse_args()
 
     if args.command == "render":
         _cmd_render(args)
+    elif args.command == "serve":
+        _cmd_serve(args)
 
 
 def _cmd_render(args: argparse.Namespace) -> None:
@@ -57,7 +127,6 @@ def _cmd_render(args: argparse.Namespace) -> None:
         print(f"Error: invalid URL — {exc}", file=sys.stderr)
         sys.exit(1)
 
-    # Fetch IFC bytes from git
     try:
         ifc_bytes = fetch_ifc_bytes(ifc_url)
     except ImportError as exc:
@@ -67,7 +136,6 @@ def _cmd_render(args: argparse.Namespace) -> None:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    # Load model from bytes via a temp file
     tmp_fd, tmp_ifc = tempfile.mkstemp(suffix=".ifc")
     try:
         os.write(tmp_fd, ifc_bytes)
@@ -83,7 +151,6 @@ def _cmd_render(args: argparse.Namespace) -> None:
         except OSError:
             pass
 
-    # Render
     try:
         png_bytes = render_mod.render(
             model,
@@ -105,6 +172,22 @@ def _cmd_render(args: argparse.Namespace) -> None:
     with open(out_path, "wb") as f:
         f.write(png_bytes)
     print(f"Saved render to {out_path}", file=sys.stderr)
+
+
+def _cmd_serve(args: argparse.Namespace) -> None:
+    try:
+        import uvicorn
+
+        from ifcurl.service import app
+    except ImportError:
+        print(
+            "Error: service dependencies are not installed.\n"
+            "Install with: pip install 'ifcurl[service]'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

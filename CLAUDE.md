@@ -5,11 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-pip install -e ".[render]"       # install with rendering dependencies
-python -m pytest tests/          # run all tests
-python -m pytest tests/test_url.py -v  # run URL parser tests
-ifcurl render "ifc://..."       # render a URL to ifcurl-render.png
+pip install -e ".[render]"           # install with rendering dependencies
+pip install -e ".[service]"          # install with service dependencies (includes render)
+python -m pytest tests/              # run all tests
+python -m pytest tests/test_url.py -v
+ifcurl render "ifc://..."            # render a URL to ifc-url-render.png
 ifcurl render "ifc://..." -o out.png
+ifcurl serve                         # start preview service on 127.0.0.1:8000
+ifcurl serve --host 0.0.0.0 --port 9000
 ```
 
 ## Project overview

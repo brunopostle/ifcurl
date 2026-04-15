@@ -46,8 +46,11 @@ except ImportError:
 from ifcurl.url import IfcUrl
 
 
-def fetch_ifc_bytes(ifc_url: IfcUrl) -> bytes:
-    """Return the raw bytes of the IFC file addressed by *ifc_url*.
+def fetch_ifc(ifc_url: IfcUrl) -> tuple[str, bytes]:
+    """Return ``(commit_hexsha, ifc_bytes)`` for the file addressed by *ifc_url*.
+
+    The commit hexsha is the resolved, immutable identifier for the ref —
+    useful as a cache key even when the URL uses a mutable ref like a branch.
 
     :param ifc_url: A parsed :class:`IfcUrl`.
     :raises ImportError: If GitPython is not installed.
@@ -59,17 +62,32 @@ def fetch_ifc_bytes(ifc_url: IfcUrl) -> bytes:
     if ifc_url.path is None:
         raise ValueError("URL has no 'path' parameter — cannot fetch IFC file")
 
-    if ifc_url.transport == "local":
-        repo = _open_local(ifc_url.repo_path)
-    else:
-        repo = _open_remote(ifc_url.git_remote_url(), ifc_url.is_mutable_ref())
+    repo = _get_repo(ifc_url)
+    return _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
 
-    return _read_blob(repo, ifc_url.git_ref(), ifc_url.path)
+
+def fetch_ifc_bytes(ifc_url: IfcUrl) -> bytes:
+    """Return the raw bytes of the IFC file addressed by *ifc_url*.
+
+    :param ifc_url: A parsed :class:`IfcUrl`.
+    :raises ImportError: If GitPython is not installed.
+    :raises ValueError: If ``ifc_url.path`` is unset, the repo cannot be
+        reached, or the file is not found at the specified ref.
+    """
+    _, data = fetch_ifc(ifc_url)
+    return data
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _get_repo(ifc_url: IfcUrl) -> git.Repo:
+    """Open or fetch the repository for *ifc_url*."""
+    if ifc_url.transport == "local":
+        return _open_local(ifc_url.repo_path)
+    return _open_remote(ifc_url.git_remote_url(), ifc_url.is_mutable_ref())
 
 
 def _open_local(repo_path: str) -> git.Repo:
@@ -122,15 +140,14 @@ def _open_remote(remote_url: str, is_mutable: bool) -> git.Repo:
     return repo
 
 
-def _read_blob(repo: git.Repo, git_ref: str, file_path: str) -> bytes:
-    """Return the raw bytes of *file_path* at *git_ref* in *repo*."""
+def _read_commit_blob(repo: git.Repo, git_ref: str, file_path: str) -> tuple[str, bytes]:
+    """Return ``(commit_hexsha, bytes)`` for *file_path* at *git_ref* in *repo*."""
     try:
         commit = repo.commit(git_ref)
     except (git.exc.BadName, git.exc.BadObject) as exc:
         raise ValueError(f"Ref {git_ref!r} not found in repository") from exc
 
     try:
-        # Tree navigation: split path and traverse (handles nested directories)
         obj = commit.tree
         for part in file_path.strip("/").split("/"):
             obj = obj[part]
@@ -140,4 +157,4 @@ def _read_blob(repo: git.Repo, git_ref: str, file_path: str) -> bytes:
     if obj.type != "blob":
         raise ValueError(f"{file_path!r} is a directory, not a file")
 
-    return obj.data_stream.read()
+    return commit.hexsha, obj.data_stream.read()
