@@ -1,0 +1,50 @@
+services:
+  gitea:
+    image: docker.io/gitea/gitea:latest
+    container_name: ifcurl-gitea
+    restart: unless-stopped
+    ports:
+      - "3000:3000"   # web UI
+      - "2222:22"     # SSH (avoids conflict with host sshd on 22)
+    volumes:
+      - gitea-data:/data
+    environment:
+      # Run the container process as the current host user so files in the
+      # volume are owned by you, not root.
+      USER_UID: "${UID:-1000}"
+      USER_GID: "${GID:-1000}"
+
+      # Skip the interactive web installer — all required settings are
+      # supplied here as environment variables.
+      GITEA__security__INSTALL_LOCK: "true"
+
+      # Database: SQLite is sufficient for local development.
+      GITEA__database__DB_TYPE: sqlite3
+      GITEA__database__PATH: /data/gitea/gitea.db
+
+      # Server: tell Gitea its own public URL so clone URLs are correct.
+      GITEA__server__HTTP_PORT: "3000"
+      GITEA__server__ROOT_URL: "http://localhost:3000"
+      GITEA__server__SSH_PORT: "2222"
+      GITEA__server__SSH_LISTEN_PORT: "22"
+
+      # Reduce log noise during development.
+      GITEA__log__LEVEL: Warn
+
+volumes:
+  gitea-data:
+    name: ifcurl-gitea-data
+
+# Usage:
+#   podman-compose up -d          start Gitea
+#   podman-compose down           stop (data preserved)
+#   podman-compose down -v        stop and wipe all data
+#
+# On first run, create an admin user:
+#   podman exec --user git ifcurl-gitea gitea admin user create \
+#       --username admin --password admin1234 --email admin@localhost \
+#       --admin --must-change-password=false
+#
+# Web UI:  http://localhost:3000  (admin / admin1234)
+# SSH:     ssh://git@localhost:2222/<user>/<repo>.git
+# API:     http://localhost:3000/api/v1  (basic auth or token)
