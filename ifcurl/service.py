@@ -184,8 +184,18 @@ class PreviewRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Endpoint
+# Endpoints
 # ---------------------------------------------------------------------------
+
+@app.get("/preview")
+def preview_get(url: str) -> Response:
+    """GET variant of POST /preview for use in HTML ``<img src>`` tags.
+
+    The ``url`` query parameter is the ifc:// URL to render.  All caching
+    and authentication behaviour is identical to the POST endpoint.
+    """
+    return preview(PreviewRequest(url=url))
+
 
 @app.post("/preview")
 def preview(request: PreviewRequest) -> Response:
