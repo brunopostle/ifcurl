@@ -128,10 +128,33 @@ def _cache_dir_for(remote_url: str) -> Path:
 
 def _auth_url(remote_url: str, token: str | None) -> str:
     """Return *remote_url* with the token injected, or the original URL."""
-    if token and remote_url.startswith("https://"):
+    if token and (remote_url.startswith("https://") or remote_url.startswith("http://")):
         from ifcurl.auth import inject_token
         return inject_token(remote_url, token)
     return remote_url
+
+
+def _http_fallback(url: str) -> str | None:
+    """Return the http:// equivalent of an https:// URL, or None."""
+    if url.startswith("https://"):
+        return "http" + url[5:]
+    return None
+
+
+def _clone_bare(auth_url: str, git_dir: Path, remote_url: str) -> git.Repo:
+    """Clone *auth_url* as a bare repo to *git_dir*, falling back to http
+    when the server does not speak HTTPS (common for local dev instances).
+    """
+    try:
+        return git.Repo.clone_from(auth_url, str(git_dir), bare=True)
+    except git.exc.GitCommandError as exc:
+        fallback = _http_fallback(auth_url)
+        if fallback:
+            try:
+                return git.Repo.clone_from(fallback, str(git_dir), bare=True)
+            except git.exc.GitCommandError:
+                pass  # report the original error
+        raise ValueError(f"Failed to clone {remote_url!r}: {exc.stderr.strip()}") from exc
 
 
 def _open_remote(remote_url: str, is_mutable: bool, token: str | None = None) -> git.Repo:
@@ -141,26 +164,35 @@ def _open_remote(remote_url: str, is_mutable: bool, token: str | None = None) ->
     For mutable refs (branches, HEAD) the remote is fetched on every call.
     Immutable refs (commit hashes, tags) skip the fetch.
 
-    If *token* is provided it is injected into the HTTPS URL for clone and
-    fetch operations but is never written to the on-disk git config.
+    If *token* is provided it is injected into the URL for clone and fetch
+    operations but is never written to the on-disk git config.
+
+    HTTPS URLs automatically fall back to HTTP when the server does not
+    speak TLS — this handles local Gitea instances running on HTTP.
     """
     cache_dir = _cache_dir_for(remote_url)
     git_dir = cache_dir / "repo.git"
     auth = _auth_url(remote_url, token)
 
     if not git_dir.exists():
-        try:
-            repo = git.Repo.clone_from(auth, str(git_dir), bare=True)
-        except git.exc.GitCommandError as exc:
-            raise ValueError(f"Failed to clone {remote_url!r}: {exc.stderr.strip()}") from exc
+        repo = _clone_bare(auth, git_dir, remote_url)
     else:
         repo = git.Repo(str(git_dir))
         if is_mutable:
             try:
                 if auth != remote_url:
-                    # Fetch from the authenticated URL directly so the token
+                    # Fetch directly from the authenticated URL so the token
                     # is never stored in the repo config.
-                    repo.git.fetch(auth, "+refs/*:refs/*")
+                    fetch_url = auth
+                    fallback = _http_fallback(auth)
+                    try:
+                        repo.git.fetch(fetch_url, "+refs/*:refs/*")
+                    except git.exc.GitCommandError:
+                        if fallback:
+                            try:
+                                repo.git.fetch(fallback, "+refs/*:refs/*")
+                            except git.exc.GitCommandError:
+                                pass
                 else:
                     repo.git.fetch("origin")
             except git.exc.GitCommandError:

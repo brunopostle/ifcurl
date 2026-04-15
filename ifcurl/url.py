@@ -58,14 +58,20 @@ class IfcUrl:
             raise ValueError(f"Expected ifc:// scheme, got {parsed.scheme!r}")
 
         # --- Transport and authority ---
+        # parsed.hostname strips the port; we rebuild host as hostname:port
+        # so that git_remote_url() generates correct clone URLs for
+        # non-standard ports (e.g. a local Gitea on :3000 or SSH on :2222).
+        def _host(p) -> str:
+            return f"{p.hostname}:{p.port}" if p.port else (p.hostname or "")
+
         if parsed.username:
             transport = "ssh"
             user: str | None = parsed.username
-            host = parsed.hostname or ""
+            host = _host(parsed)
         elif parsed.netloc:
             transport = "https"
             user = None
-            host = parsed.hostname or ""
+            host = _host(parsed)
         else:
             transport = "local"
             user = None
@@ -147,7 +153,14 @@ class IfcUrl:
         )
 
     def git_remote_url(self) -> str:
-        """Return the git remote URL for this IFC URL (SSH or HTTPS form)."""
+        """Return the git remote URL for this IFC URL.
+
+        The port is preserved when non-standard.  SSH uses ssh://, HTTPS
+        uses https://.  Whether the server actually speaks HTTPS or plain
+        HTTP is resolved at clone time — see ifcurl.git._open_remote which
+        falls back from https to http when the server refuses the TLS
+        handshake.
+        """
         if self.transport == "local":
             return self.repo_path
         if self.transport == "ssh":

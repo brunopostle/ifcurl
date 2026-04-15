@@ -176,6 +176,21 @@ def test_git_remote_url_local():
     assert url.git_remote_url() == "/home/alice/project"
 
 
+def test_git_remote_url_https_nonstandard_port():
+    url = IfcUrl.parse("ifc://localhost:3000/org/repo@heads/main?path=m.ifc")
+    assert url.git_remote_url() == "https://localhost:3000/org/repo"
+
+
+def test_git_remote_url_ssh_nonstandard_port():
+    url = IfcUrl.parse("ifc://git@localhost:2222/org/repo@heads/main?path=m.ifc")
+    assert url.git_remote_url() == "ssh://git@localhost:2222/org/repo"
+
+
+def test_host_preserves_port():
+    url = IfcUrl.parse("ifc://example.com:8080/org/repo@HEAD?path=m.ifc")
+    assert url.host == "example.com:8080"
+
+
 # ---------------------------------------------------------------------------
 # is_mutable_ref()
 # ---------------------------------------------------------------------------
