@@ -42,8 +42,11 @@ try:
     import numpy as np
     import pyvista as pv
 
+    # Resolve pyvista's lazy-loaded Plotter class at import time so that
+    # concurrent requests in a threadpool don't race on the lazy __getattr__.
+    _Plotter = pv.Plotter
     _HAS_PYVISTA = True
-except ImportError:
+except (ImportError, AttributeError):
     _HAS_PYVISTA = False
 
 # Highlight colour used in 'highlight' visibility mode (orange).
@@ -195,7 +198,7 @@ def _render_iterator(
     scale: float | None,
 ) -> bytes:
     """Drive a geometry iterator into a pyvista plotter and return PNG bytes."""
-    plotter = pv.Plotter(off_screen=True, window_size=(1280, 960))
+    plotter = _Plotter(off_screen=True, window_size=(1280, 960))
     plotter.background_color = "white"
 
     frozen_ids = frozenset(selection_ids) if selection_ids else None
@@ -213,6 +216,9 @@ def _render_iterator(
     else:
         plotter.reset_camera()
         plotter.camera.up = (0, 0, 1)
+        if scale is not None:
+            plotter.camera.parallel_projection = True
+            plotter.camera.parallel_scale = scale
 
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
     os.close(tmp_fd)
@@ -425,9 +431,10 @@ def render(
     # --- Regular element rendering ---
     settings = _build_geom_settings(model)
 
-    if selector_elements is not None:
-        if not selector_elements:
-            raise ValueError(f"Selector {selector!r} matched only type entities")
+    if selector_elements is not None and not selector_elements:
+        raise ValueError(f"Selector {selector!r} matched only type entities")
+
+    if selector_elements is not None and visibility == "isolate":
         iterator = ifcopenshell.geom.iterator(
             settings, model, multiprocessing.cpu_count(), include=selector_elements
         )
