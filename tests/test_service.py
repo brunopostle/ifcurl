@@ -24,8 +24,9 @@ SELECTOR_URL = "ifc://example.com/org/repo@heads/main?path=model.ifc&selector=If
 
 
 @pytest.fixture(autouse=True)
-def clear_caches():
-    """Reset in-memory caches and tier-4 filesystem cache between tests."""
+def clear_caches(tmp_path, monkeypatch):
+    """Reset in-memory caches and redirect filesystem PNG cache between tests."""
+    monkeypatch.setattr("ifcurl.service.user_cache_dir", lambda *a, **kw: str(tmp_path))
     _t2_cache.clear()
     _t3_cache.clear()
     yield
@@ -34,9 +35,8 @@ def clear_caches():
 
 
 @pytest.fixture()
-def tmp_t4_cache(tmp_path, monkeypatch):
-    """Redirect tier-4 PNG cache to a temp directory."""
-    monkeypatch.setattr("ifcurl.service.user_cache_dir", lambda *a, **kw: str(tmp_path))
+def tmp_t4_cache(tmp_path):
+    """Return the temp cache directory (already redirected by clear_caches)."""
     return tmp_path
 
 
@@ -109,7 +109,7 @@ class TestTier2Cache:
             client.post("/preview", json={"url": MUTABLE_URL})
         assert (FAKE_HEXSHA, "model.ifc") in _t2_cache
 
-    def test_second_request_uses_cached_bytes(self, model_with_geometry):
+    def test_second_request_uses_cached_bytes(self, model_with_geometry, monkeypatch):
         ifc_bytes = model_with_geometry.to_string().encode()
         call_count = 0
 
@@ -118,6 +118,9 @@ class TestTier2Cache:
             call_count += 1
             return FAKE_HEXSHA, ifc_bytes
 
+        # Disable tier-4m so both requests reach fetch_ifc, letting us
+        # verify that tier-2 serves ifc_bytes from cache on the second call.
+        monkeypatch.setattr("ifcurl.service._T4M_TTL", 0)
         with patch("ifcurl.service.fetch_ifc", counting_fetch), \
              patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
             client.post("/preview", json={"url": MUTABLE_URL})
@@ -192,7 +195,7 @@ class TestTier4Cache:
         assert r2.content == FAKE_PNG
         assert render_call_count == 1  # render only called once
 
-    def test_png_not_cached_for_mutable_ref(self, tmp_t4_cache, model_with_geometry):
+    def test_png_cached_for_mutable_ref_within_ttl(self, tmp_t4_cache, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()
         render_call_count = 0
 
@@ -206,7 +209,24 @@ class TestTier4Cache:
             client.post("/preview", json={"url": MUTABLE_URL})
             client.post("/preview", json={"url": MUTABLE_URL})
 
-        assert render_call_count == 2  # no tier-4 cache for mutable ref
+        assert render_call_count == 1  # second request served from tier-4m cache
+
+    def test_png_not_cached_for_mutable_ref_after_ttl(self, tmp_t4_cache, model_with_geometry, monkeypatch):
+        ifc_bytes = model_with_geometry.to_string().encode()
+        render_call_count = 0
+
+        def counting_render(*args, **kwargs):
+            nonlocal render_call_count
+            render_call_count += 1
+            return FAKE_PNG
+
+        monkeypatch.setattr("ifcurl.service._T4M_TTL", 0)
+        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
+             patch("ifcurl.service.render_mod.render", counting_render):
+            client.post("/preview", json={"url": MUTABLE_URL})
+            client.post("/preview", json={"url": MUTABLE_URL})
+
+        assert render_call_count == 2  # TTL=0 means cache always expired
 
     def test_tier4_cache_file_exists_on_disk(self, tmp_t4_cache, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()

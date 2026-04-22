@@ -39,6 +39,7 @@ import hashlib
 import os
 import tempfile
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
 
@@ -128,11 +129,11 @@ def _guids_to_step_ids(model: ifcopenshell.file, guids: frozenset[str]) -> list[
 
 
 # ---------------------------------------------------------------------------
-# Tier 4: sha256(url) → PNG (filesystem, immutable refs only)
+# Tier 4: sha256(url) → PNG (filesystem, immutable refs only, no expiry)
 # ---------------------------------------------------------------------------
 
 def _t4_path(url: str) -> Path:
-    cache_dir = Path(user_cache_dir("ifcurl")) / "renders"
+    cache_dir = Path(user_cache_dir("ifcurl")) / "renders" / "immutable"
     cache_dir.mkdir(parents=True, exist_ok=True)
     url_hash = hashlib.sha256(url.encode()).hexdigest()
     return cache_dir / f"{url_hash}.png"
@@ -147,6 +148,36 @@ def _t4_get(url: str) -> bytes | None:
 
 def _t4_put(url: str, png: bytes) -> None:
     _t4_path(url).write_bytes(png)
+
+
+# ---------------------------------------------------------------------------
+# Tier 4m: sha256(url) → PNG (filesystem, mutable refs, 5-minute TTL)
+# ---------------------------------------------------------------------------
+
+_T4M_TTL = 300  # seconds
+
+
+def _t4m_path(url: str) -> Path:
+    cache_dir = Path(user_cache_dir("ifcurl")) / "renders" / "mutable"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    url_hash = hashlib.sha256(url.encode()).hexdigest()
+    return cache_dir / f"{url_hash}.png"
+
+
+def _t4m_get(url: str) -> tuple[bytes, int] | None:
+    """Return (png_bytes, remaining_seconds) or None if missing/expired."""
+    path = _t4m_path(url)
+    try:
+        remaining = int(os.path.getmtime(path) + _T4M_TTL - time.time())
+        if remaining <= 0:
+            return None
+        return path.read_bytes(), remaining
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def _t4m_put(url: str, png: bytes) -> None:
+    _t4m_path(url).write_bytes(png)
 
 
 # ---------------------------------------------------------------------------
@@ -213,11 +244,24 @@ def preview(request: PreviewRequest) -> Response:
     if ifc_url.path is None:
         raise HTTPException(status_code=400, detail="URL has no 'path' parameter")
 
-    # --- Tier 4: cached PNG for immutable refs ---
-    if not ifc_url.is_mutable_ref():
+    # --- Tier 4 / 4m: cached PNG ---
+    if ifc_url.is_mutable_ref():
+        t4m_hit = _t4m_get(request.url)
+        if t4m_hit is not None:
+            cached_png, remaining = t4m_hit
+            return Response(
+                content=cached_png,
+                media_type="image/png",
+                headers={"Cache-Control": f"public, max-age={remaining}"},
+            )
+    else:
         cached_png = _t4_get(request.url)
         if cached_png is not None:
-            return Response(content=cached_png, media_type="image/png")
+            return Response(
+                content=cached_png,
+                media_type="image/png",
+                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            )
 
     # --- Resolve authentication token ---
     token = request.token
@@ -284,8 +328,18 @@ def preview(request: PreviewRequest) -> Response:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    # --- Tier 4: store PNG for immutable refs ---
-    if not ifc_url.is_mutable_ref():
+    # --- Tier 4 / 4m: store PNG and return with appropriate cache headers ---
+    if ifc_url.is_mutable_ref():
+        _t4m_put(request.url, png_bytes)
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={"Cache-Control": f"public, max-age={_T4M_TTL}"},
+        )
+    else:
         _t4_put(request.url, png_bytes)
-
-    return Response(content=png_bytes, media_type="image/png")
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )

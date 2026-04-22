@@ -118,6 +118,88 @@ Add `ifc://` link detection and preview embedding to Gitea.
 
 ---
 
+## Phase 3b — Web IFC viewer
+
+Add a 3D viewer that opens in a separate browser window when viewing an `.ifc`
+file in Forgejo.
+
+### Architecture
+
+- **Forgejo Go patch**: when rendering the file view for a `.ifc` file, inject
+  a "View in 3D" button that opens
+  `http://localhost:8000/viewer?url=ifc://...` in a new tab.  The ifc:// URL
+  encodes the current host, repo, ref, and file path.
+
+- **`/viewer` endpoint** in the ifcurl preview service: returns a self-contained
+  HTML page.  No server-side IFC processing — the browser does all rendering.
+
+- **Browser rendering**: the viewer page loads `@thatopen/components` (and its
+  `web-ifc` + Three.js peer dependencies) from a CDN via an ES module importmap.
+  It constructs the Forgejo raw file URL from the ifc:// URL parameters and
+  fetches the IFC bytes directly from Forgejo.
+
+### Current scope (Phase 3b)
+
+- Display the full model for whatever ref is shown in Forgejo.
+- Basic orbit/pan/zoom camera controls.
+- No filtering or selection UI yet.
+
+### Future scope
+
+- Element filtering and selection using `@thatopen/components` classifier and
+  highlighter APIs.
+- Camera state serialised to an `ifc://` URL so the user can copy a view link
+  (feeds into Phase 4 Bonsai "Copy view URL").
+- Diff highlighting driven by ifcmerge output (see Phase 3c).
+
+---
+
+## Phase 3c — ifcmerge integration
+
+`ifcmerge` is a git custom merge driver that resolves conflicts in `.ifc` files
+that git's built-in 3-way merge cannot handle.  Where two branches have both
+modified an IFC file (a fork), git would report an unresolvable conflict;
+ifcmerge performs a semantics-aware merge and produces a valid merged IFC file.
+
+### Git merge driver configuration
+
+Register ifcmerge as the git merge driver for `.ifc` files on the Forgejo
+server:
+
+```
+# /etc/gitconfig or ~forgejo/.gitconfig
+[merge "ifcmerge"]
+    name = IFC merge driver
+    driver = ifcmerge %O %A %B %L
+```
+
+```
+# .gitattributes in each repo, or server-side gitattributes
+*.ifc merge=ifcmerge
+```
+
+With this in place, Forgejo's existing "merge automatically" path will invoke
+ifcmerge via git when merging `.ifc` files, and the PR merge button will work
+without any Go-side changes for the common case.
+
+### Forgejo integration
+
+- Verify that Forgejo's merge-ability check (the "these branches can be merged
+  automatically" indicator) correctly reflects ifcmerge's ability to merge
+  `.ifc` files — investigate whether the check runs a trial merge via git or
+  uses a heuristic.
+- If needed, patch Forgejo to run a trial `git merge --no-commit` to get an
+  accurate result for IFC files.
+
+### 3D diff view (future)
+
+- After a merge completes, surface a "View merge in 3D" button in the PR using
+  the Phase 3b viewer.
+- Use `@thatopen/components` highlighter to colour added, removed, and modified
+  elements differently, driven by comparing the merged IFC against either parent.
+
+---
+
 ## Phase 4 — Bonsai integration
 
 Add `ifc://` handling to Bonsai.
