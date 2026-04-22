@@ -1,0 +1,68 @@
+<script>
+// ifcurl — inject "View in 3D" button on .ifc file view pages.
+//
+// Deploy to: /etc/forgejo/templates/custom/footer.tmpl
+//
+// Uses the permalink href (always a full commit hash) to construct an
+// unambiguous ifc:// URL regardless of branch names containing slashes.
+(function () {
+  "use strict";
+
+  var VIEWER_BASE = "http://localhost:8000/viewer";
+
+  // -------------------------------------------------------------------------
+  // Find a commit-based href on this page.
+  // Case 1: viewing at a branch/tag — permalink button is present.
+  // Case 2: already viewing at a commit — current URL contains /src/commit/.
+  // -------------------------------------------------------------------------
+  function commitHref() {
+    var a = document.querySelector('a[href*="/src/commit/"]');
+    if (a) return a.getAttribute("href");
+    if (/\/src\/commit\//.test(window.location.pathname)) {
+      return window.location.pathname;
+    }
+    return null;
+  }
+
+  // Parse /owner/repo/src/commit/{40hex}/{treepath}
+  // Returns {repoPath, hash, treePath} or null.
+  function parseCommitHref(href) {
+    var m = href.match(/^\/([^/]+\/[^/]+)\/src\/commit\/([0-9a-f]{40})\/(.+)$/i);
+    if (!m) return null;
+    return { repoPath: m[1], hash: m[2], treePath: m[3] };
+  }
+
+  function init() {
+    var href = commitHref();
+    if (!href) return;
+
+    var info = parseCommitHref(href);
+    if (!info) return;
+    if (!info.treePath.toLowerCase().endsWith(".ifc")) return;
+
+    var host    = window.location.host;
+    var ifcUrl  = "ifc://" + host + "/" + info.repoPath
+                + "@" + info.hash
+                + "?path=" + encodeURIComponent(info.treePath);
+    var viewUrl = VIEWER_BASE + "?url=" + encodeURIComponent(ifcUrl);
+
+    // Insert button alongside the existing Raw / Permalink / History buttons.
+    var btnGroup = document.querySelector(".file-header-right .ui.buttons");
+    if (!btnGroup) return;
+
+    var btn = document.createElement("a");
+    btn.href      = viewUrl;
+    btn.target    = "_blank";
+    btn.rel       = "noopener noreferrer";
+    btn.className = "ui mini basic button";
+    btn.textContent = "View in 3D";
+    btnGroup.appendChild(btn);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>

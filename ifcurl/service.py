@@ -40,19 +40,22 @@ import os
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections import OrderedDict
 from pathlib import Path
 
 import ifcopenshell
 import ifcopenshell.util.selector
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
 from platformdirs import user_cache_dir
 from pydantic import BaseModel
 
 from ifcurl import render as render_mod
 from ifcurl.auth import get_token_for_host
 from ifcurl.git import fetch_ifc
+from ifcurl.viewer import VIEWER_HTML
 from ifcurl.url import IfcUrl
 
 app = FastAPI(
@@ -217,6 +220,35 @@ class PreviewRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@app.get("/viewer")
+def viewer(url: str = "") -> HTMLResponse:
+    """Serve the self-contained web IFC viewer page.
+
+    The ``url`` query parameter should be an ifc:// URL.  The page loads
+    ``@thatopen/components`` from CDN and fetches the IFC file through
+    ``/proxy`` to avoid cross-origin restrictions.
+    """
+    return HTMLResponse(content=VIEWER_HTML)
+
+
+@app.get("/proxy")
+def proxy(url: str) -> Response:
+    """Proxy a raw IFC file URL to the browser, avoiding CORS restrictions.
+
+    Only intended for fetching IFC bytes from the co-located Forgejo instance.
+    No IFC processing is performed — bytes are forwarded as-is.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310
+            data = resp.read()
+            content_type = resp.headers.get_content_type() or "application/octet-stream"
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(status_code=exc.code, detail=str(exc.reason)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=data, media_type=content_type)
+
 
 @app.get("/preview")
 def preview_get(url: str) -> Response:
