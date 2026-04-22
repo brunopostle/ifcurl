@@ -200,6 +200,22 @@ Tokens are injected into HTTPS remote URLs (`https://<token>@host/path`) for clo
 
 Tier 4 is never written for mutable refs (`@heads/`, `@HEAD`) since the underlying commit may change.
 
+### Web IFC viewer
+
+The preview service also hosts a browser-based 3D viewer:
+
+```
+GET /viewer?url=ifc://...
+```
+
+The viewer page loads [`@thatopen/components`](https://github.com/ThatOpenCompany/that-open-engine) from CDN and renders the model client-side using WebGL.  IFC bytes are fetched via a same-origin proxy endpoint to avoid CORS restrictions:
+
+```
+GET /proxy?url=<raw-forgejo-url>
+```
+
+**Design note:** The `/proxy` endpoint exists because Forgejo does not set `Access-Control-Allow-Origin` on raw file responses, so the browser cannot fetch the IFC directly.  If Forgejo were configured to send CORS headers (or if the viewer were served from the same origin as Forgejo), the proxy would be unnecessary and the browser could fetch the IFC file directly.  The proxy also does not currently forward authentication credentials, so it only works for publicly-accessible files.
+
 ---
 
 ## Remote repository caching
