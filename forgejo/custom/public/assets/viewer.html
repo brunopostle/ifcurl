@@ -22,6 +22,16 @@
     }
     #url-input:focus { border-color: rgba(255,255,255,0.3); }
     #url-input::placeholder { color: #606068; }
+    #fov-wrap {
+      display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+      font-size: 11px; color: #a0a0a8; white-space: nowrap;
+    }
+    #fov-input {
+      width: 44px; font-size: 11px; color: #f0f0f0; font-family: monospace;
+      background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 4px; padding: 3px 6px; outline: none; text-align: right;
+    }
+    #fov-input:focus { border-color: rgba(255,255,255,0.3); }
     #status {
       position: fixed; bottom: 12px; left: 50%;
       transform: translateX(-50%); z-index: 10;
@@ -55,6 +65,9 @@
 <body>
   <div id="toolbar">
     <input id="url-input" type="text" placeholder="Paste ifc:// URL and press Enter" spellcheck="false">
+    <div id="fov-wrap">
+      FOV <input id="fov-input" type="number" min="10" max="120" step="1" title="Field of view (degrees)">°
+    </div>
   </div>
   <div id="viewer"></div>
   <div id="status"></div>
@@ -67,29 +80,20 @@
     const ifcUrl   = params.get("url") ?? "";
     const statusEl = document.getElementById("status");
     const urlInput = document.getElementById("url-input");
+    const fovInput = document.getElementById("fov-input");
     const toolbar  = document.getElementById("toolbar");
 
-    // Keep viewer below the toolbar so the toolbar never overlaps the canvas.
+    // Keep viewer below the toolbar so the canvas never overlaps the input.
     const resizeObs = new ResizeObserver(() => {
       document.documentElement.style.setProperty("--toolbar-h", toolbar.offsetHeight + "px");
     });
     resizeObs.observe(toolbar);
 
-    // Module-level reference so event handlers can reach camera controls.
+    // Module-level references set once the world is initialised.
     let cameraControls = null;
+    let threeCamera    = null;
 
     urlInput.value = ifcUrl;
-
-    // Disable camera controls while the input has focus so keystrokes are not
-    // swallowed by the camera-controls library.
-    urlInput.addEventListener("focus", () => {
-      if (cameraControls) cameraControls.enabled = false;
-    });
-    urlInput.addEventListener("blur", () => {
-      if (cameraControls) cameraControls.enabled = true;
-    });
-    urlInput.addEventListener("pointerdown", e => e.stopPropagation());
-    urlInput.addEventListener("mousedown",   e => e.stopPropagation());
 
     // -----------------------------------------------------------------------
     // Navigate to the viewer with a different ifc:// URL.
@@ -101,10 +105,26 @@
     }
 
     urlInput.addEventListener("keydown", e => {
-      if (e.key === "Enter") {
-        const v = urlInput.value.trim();
-        if (v) loadUrl(v);
-      }
+      if (e.key === "Enter") { const v = urlInput.value.trim(); if (v) loadUrl(v); }
+    });
+
+    // Disable camera controls while inputs have focus so keystrokes reach them.
+    function onInputFocus()  { if (cameraControls) cameraControls.enabled = false; }
+    function onInputBlur()   { if (cameraControls) cameraControls.enabled = true;  }
+    for (const el of [urlInput, fovInput]) {
+      el.addEventListener("focus",       onInputFocus);
+      el.addEventListener("blur",        onInputBlur);
+      el.addEventListener("pointerdown", e => e.stopPropagation());
+      el.addEventListener("mousedown",   e => e.stopPropagation());
+    }
+
+    fovInput.addEventListener("change", () => {
+      if (!threeCamera?.isPerspectiveCamera) return;
+      const v = parseFloat(fovInput.value);
+      if (isNaN(v)) return;
+      threeCamera.fov = Math.max(10, Math.min(120, v));
+      threeCamera.updateProjectionMatrix();
+      syncCameraUrl(threeCamera);
     });
 
     // -----------------------------------------------------------------------
@@ -133,14 +153,14 @@
           try {
             const u = new URL(t, window.location.href);
             const p = u.searchParams.get("url");
-            if (p && p.startsWith("ifc://")) { loadUrl(p); return; }
+            if (p?.startsWith("ifc://")) { loadUrl(p); return; }
           } catch { /* not a URL */ }
         }
       }
     });
 
     // -----------------------------------------------------------------------
-    // Coordinate transforms between IFC world space (Z-up) and Three.js (Y-up).
+    // Coordinate transforms: IFC world space (Z-up) ↔ Three.js (Y-up).
     //   IFC → Three.js:  (x, y, z) → (x,  z, -y)
     //   Three.js → IFC:  (x, y, z) → (x, -z,  y)
     // -----------------------------------------------------------------------
@@ -148,8 +168,8 @@
     const toThree = (x, y, z) => new THREE.Vector3(x, z, -y);
 
     // -----------------------------------------------------------------------
-    // Rebuild the ifc:// URL with the current camera viewpoint in IFC world
-    // coordinates, and push it to the toolbar and browser address bar.
+    // Rebuild the ifc:// URL with the current camera viewpoint (IFC coords)
+    // and push to the toolbar and browser address bar.
     // -----------------------------------------------------------------------
     function syncCameraUrl(camera) {
       const pos = camera.position;
@@ -172,9 +192,11 @@
       if (camera.isPerspectiveCamera) {
         qs.set("fov", f(camera.fov).toString());
         qs.delete("scale");
+        fovInput.value = Math.round(camera.fov);
       } else {
         qs.set("scale", f(camera.top - camera.bottom).toString());
         qs.delete("fov");
+        fovInput.value = "";
       }
       const newIfcUrl = base + "?" + qs.toString().replace(/%2C/g, ",");
 
@@ -186,10 +208,10 @@
     }
 
     // -----------------------------------------------------------------------
-    // If the ifc:// URL contains a camera= param, place the camera there.
-    // Returns true if the camera was positioned from the URL.
+    // Place the camera from the ifc:// URL's camera= / fov= / scale= params.
+    // Returns true if a camera param was found and applied.
     // -----------------------------------------------------------------------
-    async function applyCameraParam(controls) {
+    async function applyCameraParam(controls, camera) {
       const qIdx = ifcUrl.indexOf("?");
       if (qIdx < 0) return false;
       const qs = new URLSearchParams(ifcUrl.slice(qIdx + 1));
@@ -202,36 +224,68 @@
       const dir    = toThree(v[3], v[4], v[5]);
       const target = pos.clone().add(dir);
       await controls.setLookAt(pos.x, pos.y, pos.z, target.x, target.y, target.z, false);
+
+      const fovStr = qs.get("fov");
+      if (fovStr && camera.isPerspectiveCamera) {
+        camera.fov = Math.max(10, Math.min(120, parseFloat(fovStr)));
+        camera.updateProjectionMatrix();
+        fovInput.value = Math.round(camera.fov);
+      }
       return true;
     }
 
     // -----------------------------------------------------------------------
-    // Convert an ifc:// URL to a Forgejo raw file URL so the browser fetches
-    // directly from Forgejo using its existing session (no proxy needed).
+    // Convert an ifc:// URL to an HTTPS raw file URL for browser fetching.
     //
-    // ifc://host:port/org/repo@{hash}?path=file.ifc
-    //   → http://host:port/org/repo/raw/commit/{hash}/file.ifc
+    // Handles:
+    //   - Optional SSH user prefix: ifc://git@host/... → strip user@
+    //   - GitHub:        → https://raw.githubusercontent.com/org/repo/ref/path
+    //   - GitLab:        → https://host/org/repo/-/raw/ref/path
+    //   - Forgejo/Gitea: → https://host/org/repo/raw/{commit|branch|tag}/ref/path
     // -----------------------------------------------------------------------
     function toRawUrl(raw) {
-      const body     = raw.slice("ifc://".length);
-      const atIdx    = body.indexOf("@");
-      const qIdx     = body.indexOf("?");
-      const hostRepo = body.slice(0, atIdx);
-      const ref      = body.slice(atIdx + 1, qIdx < 0 ? undefined : qIdx);
-      const qs       = new URLSearchParams(qIdx < 0 ? "" : body.slice(qIdx + 1));
+      const body = raw.slice("ifc://".length);
+
+      // Split authority (host) from path+query at the first "/"
+      const slashIdx = body.indexOf("/");
+      const authority   = slashIdx < 0 ? body : body.slice(0, slashIdx);
+      const pathAndQuery = slashIdx < 0 ? "" : body.slice(slashIdx + 1);
+
+      // Strip optional SSH user@ from authority
+      const atInAuth = authority.indexOf("@");
+      const host = atInAuth < 0 ? authority : authority.slice(atInAuth + 1);
+
+      // Split query string
+      const qIdx = pathAndQuery.indexOf("?");
+      const pathPart = qIdx < 0 ? pathAndQuery : pathAndQuery.slice(0, qIdx);
+      const qs = new URLSearchParams(qIdx < 0 ? "" : pathAndQuery.slice(qIdx + 1));
       const filePath = qs.get("path") ?? "";
 
-      const slashIdx = hostRepo.indexOf("/");
-      const host     = hostRepo.slice(0, slashIdx);
-      const repoPath = hostRepo.slice(slashIdx + 1);
+      // Split repoPath from ref at the last "@" in the path portion
+      const atIdx = pathPart.lastIndexOf("@");
+      const repoPath = atIdx < 0 ? pathPart : pathPart.slice(0, atIdx);
+      const ref      = atIdx < 0 ? "" : pathPart.slice(atIdx + 1);
 
-      let refSeg;
-      if      (ref.startsWith("heads/")) refSeg = "branch/" + ref.slice(6);
-      else if (ref.startsWith("tags/"))  refSeg = "tag/"    + ref.slice(5);
-      else                               refSeg = "commit/" + ref;
+      // Normalise ref for hosts that don't use gitnamespace prefixes
+      const plainRef = ref.startsWith("heads/") ? ref.slice(6)
+                     : ref.startsWith("tags/")  ? ref.slice(5)
+                     : ref;
 
-      const protocol = host.startsWith("localhost") ? "http" : "https";
-      return `${protocol}://${host}/${repoPath}/raw/${refSeg}/${filePath}`;
+      if (host === "github.com" || host.endsWith(".github.com")) {
+        return `https://raw.githubusercontent.com/${repoPath}/${plainRef}/${filePath}`;
+      }
+
+      if (host === "gitlab.com" || host.includes("gitlab")) {
+        const proto = host.startsWith("localhost") ? "http" : "https";
+        return `${proto}://${host}/${repoPath}/-/raw/${plainRef}/${filePath}`;
+      }
+
+      // Forgejo / Gitea: map gitnamespace ref to URL segment
+      const refSeg = ref.startsWith("heads/") ? "branch/" + ref.slice(6)
+                   : ref.startsWith("tags/")  ? "tag/"    + ref.slice(5)
+                   : "commit/" + ref;
+      const proto = host.startsWith("localhost") ? "http" : "https";
+      return `${proto}://${host}/${repoPath}/raw/${refSeg}/${filePath}`;
     }
 
     // -----------------------------------------------------------------------
@@ -256,11 +310,12 @@
       world.camera   = new OBC.OrthoPerspectiveCamera(components);
       world.scene.setup();
       components.init();
+
       cameraControls = world.camera.controls;
+      threeCamera    = world.camera.three;
 
       // --- FragmentsManager ---
-      // Firefox blocks cross-origin module workers; wrap in a blob URL so the
-      // worker is always same-origin regardless of where it was fetched from.
+      // Firefox blocks cross-origin module workers; wrap in a blob URL.
       const fragments = components.get(OBC.FragmentsManager);
       const workerResp = await fetch(
         "https://unpkg.com/@thatopen/fragments@3.3.1/dist/Worker/worker.mjs"
@@ -274,13 +329,10 @@
       const ifcLoader = components.get(OBC.IfcLoader);
       await ifcLoader.setup({
         autoSetWasm: false,
-        wasm: {
-          path:     "https://unpkg.com/web-ifc@0.0.75/",
-          absolute: true,
-        },
+        wasm: { path: "https://unpkg.com/web-ifc@0.0.75/", absolute: true },
       });
 
-      // --- Fetch IFC bytes directly from Forgejo ---
+      // --- Fetch IFC bytes ---
       statusEl.textContent = "Fetching IFC file…";
       let buffer;
       try {
@@ -298,18 +350,16 @@
         const model = await ifcLoader.load(buffer, true, "model");
         world.scene.three.add(model.object);
 
-        const box = model.box;
-        const hasCam = await applyCameraParam(world.camera.controls);
+        const box    = model.box;
+        const hasCam = await applyCameraParam(world.camera.controls, threeCamera);
         if (!hasCam && !box.isEmpty()) {
           await world.camera.controls.fitToBox(box, false);
         }
-        model.useCamera(world.camera.three);
+        model.useCamera(threeCamera);
         await fragments.core.update(true);
 
-        syncCameraUrl(world.camera.three);
-        world.camera.controls.addEventListener("rest", () => {
-          syncCameraUrl(world.camera.three);
-        });
+        syncCameraUrl(threeCamera);
+        world.camera.controls.addEventListener("rest", () => syncCameraUrl(threeCamera));
 
         statusEl.textContent = "";
       } catch (err) {
