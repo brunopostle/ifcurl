@@ -8,7 +8,7 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #1c1c1e; color: #f0f0f0;
            font-family: system-ui, sans-serif; overflow: hidden; }
-    #viewer { position: fixed; inset: 0; }
+    #viewer { position: fixed; inset: 0; top: var(--toolbar-h, 40px); }
     #toolbar {
       position: fixed; top: 0; left: 0; right: 0; z-index: 10;
       display: flex; align-items: center; gap: 8px; padding: 8px 12px;
@@ -67,8 +67,29 @@
     const ifcUrl   = params.get("url") ?? "";
     const statusEl = document.getElementById("status");
     const urlInput = document.getElementById("url-input");
+    const toolbar  = document.getElementById("toolbar");
+
+    // Keep viewer below the toolbar so the toolbar never overlaps the canvas.
+    const resizeObs = new ResizeObserver(() => {
+      document.documentElement.style.setProperty("--toolbar-h", toolbar.offsetHeight + "px");
+    });
+    resizeObs.observe(toolbar);
+
+    // Module-level reference so event handlers can reach camera controls.
+    let cameraControls = null;
 
     urlInput.value = ifcUrl;
+
+    // Disable camera controls while the input has focus so keystrokes are not
+    // swallowed by the camera-controls library.
+    urlInput.addEventListener("focus", () => {
+      if (cameraControls) cameraControls.enabled = false;
+    });
+    urlInput.addEventListener("blur", () => {
+      if (cameraControls) cameraControls.enabled = true;
+    });
+    urlInput.addEventListener("pointerdown", e => e.stopPropagation());
+    urlInput.addEventListener("mousedown",   e => e.stopPropagation());
 
     // -----------------------------------------------------------------------
     // Navigate to the viewer with a different ifc:// URL.
@@ -235,6 +256,7 @@
       world.camera   = new OBC.OrthoPerspectiveCamera(components);
       world.scene.setup();
       components.init();
+      cameraControls = world.camera.controls;
 
       // --- FragmentsManager ---
       // Firefox blocks cross-origin module workers; wrap in a blob URL so the
