@@ -74,6 +74,7 @@ VIEWER_HTML = """\
   <div id="status">Loading\u2026</div>
 
   <script type="module">
+    import * as THREE from "three";
     import * as OBC from "@thatopen/components";
 
     const params   = new URLSearchParams(window.location.search);
@@ -83,6 +84,45 @@ VIEWER_HTML = """\
 
     urlEl.textContent = ifcUrl || "No ifc:// URL provided";
     urlEl.title       = ifcUrl;
+
+    // -----------------------------------------------------------------------
+    // Rebuild the ifc:// URL with the current camera position, direction, and
+    // up vector, update the toolbar display and the browser address bar.
+    // -----------------------------------------------------------------------
+    function syncCameraUrl(camera) {
+      const pos = camera.position;
+      const dir = new THREE.Vector3();
+      camera.getWorldDirection(dir);
+      const up = camera.up;
+
+      const f = v => parseFloat(v.toFixed(4));
+      const cameraParam = [
+        f(pos.x), f(pos.y), f(pos.z),
+        f(dir.x), f(dir.y), f(dir.z),
+        f(up.x),  f(up.y),  f(up.z),
+      ].join(",");
+
+      const qIdx = ifcUrl.indexOf("?");
+      const base = qIdx < 0 ? ifcUrl : ifcUrl.slice(0, qIdx);
+      const qs   = new URLSearchParams(qIdx < 0 ? "" : ifcUrl.slice(qIdx + 1));
+      qs.set("camera", cameraParam);
+      if (camera.isPerspectiveCamera) {
+        qs.set("fov", f(camera.fov).toString());
+        qs.delete("scale");
+      } else {
+        // OrthographicCamera: world-space viewport height as scale
+        qs.set("scale", f(camera.top - camera.bottom).toString());
+        qs.delete("fov");
+      }
+      const newIfcUrl = base + "?" + qs.toString().replace(/%2C/g, ",");
+
+      urlEl.textContent = newIfcUrl;
+      urlEl.title       = newIfcUrl;
+
+      const pageUrl = new URL(window.location.href);
+      pageUrl.searchParams.set("url", newIfcUrl);
+      history.replaceState(null, "", pageUrl.toString());
+    }
 
     // -----------------------------------------------------------------------
     // Convert an ifc:// URL to a same-origin /proxy?url=... request so the
@@ -187,6 +227,12 @@ VIEWER_HTML = """\
         }
         model.useCamera(world.camera.three);
         await fragments.core.update(true);
+
+        // Show initial camera position in URL, then keep it live.
+        syncCameraUrl(world.camera.three);
+        world.camera.controls.addEventListener("rest", () => {
+          syncCameraUrl(world.camera.three);
+        });
 
         statusEl.textContent = "";
       } catch (err) {

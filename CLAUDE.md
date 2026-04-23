@@ -19,7 +19,7 @@ ifcurl serve --host 0.0.0.0 --port 9000
 
 `ifcurl` implements the `ifc://` URL scheme — a way to address a specific view of an IFC model stored in a Git repository. A single URL encodes the git source, an optional IfcOpenShell selector, and an optional camera viewpoint.
 
-Full spec: `SPECIFICATION.md`. Full development plan: `PLAN.md`.
+Full spec: `SPECIFICATION.md`. Development tasks tracked in beads (`bd ready`).
 
 ## URL structure
 
