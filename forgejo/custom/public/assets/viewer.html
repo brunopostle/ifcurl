@@ -15,10 +15,13 @@
       background: rgba(28,28,30,0.85); backdrop-filter: blur(8px);
       border-bottom: 1px solid rgba(255,255,255,0.08);
     }
-    #url-display {
-      flex: 1; font-size: 12px; color: #a0a0a8; font-family: monospace;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    #url-input {
+      flex: 1; font-size: 12px; color: #f0f0f0; font-family: monospace;
+      background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 4px; padding: 3px 8px; outline: none; min-width: 0;
     }
+    #url-input:focus { border-color: rgba(255,255,255,0.3); }
+    #url-input::placeholder { color: #606068; }
     #status {
       position: fixed; bottom: 12px; left: 50%;
       transform: translateX(-50%); z-index: 10;
@@ -28,6 +31,14 @@
       pointer-events: none;
     }
     #status:empty { display: none; }
+    body.drag-over::after {
+      content: "Drop ifc:// URL to load";
+      position: fixed; inset: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px; color: #f0f0f0;
+      background: rgba(28,28,30,0.7);
+      pointer-events: none;
+    }
   </style>
   <script type="importmap">
   {
@@ -43,10 +54,10 @@
 </head>
 <body>
   <div id="toolbar">
-    <span id="url-display"></span>
+    <input id="url-input" type="text" placeholder="Paste ifc:// URL and press Enter" spellcheck="false">
   </div>
   <div id="viewer"></div>
-  <div id="status">Loading&#x2026;</div>
+  <div id="status"></div>
 
   <script type="module">
     import * as THREE from "three";
@@ -55,14 +66,69 @@
     const params   = new URLSearchParams(window.location.search);
     const ifcUrl   = params.get("url") ?? "";
     const statusEl = document.getElementById("status");
-    const urlEl    = document.getElementById("url-display");
+    const urlInput = document.getElementById("url-input");
 
-    urlEl.textContent = ifcUrl || "No ifc:// URL provided";
-    urlEl.title       = ifcUrl;
+    urlInput.value = ifcUrl;
 
     // -----------------------------------------------------------------------
-    // Rebuild the ifc:// URL with the current camera position, direction, and
-    // up vector, update the toolbar display and the browser address bar.
+    // Navigate to the viewer with a different ifc:// URL.
+    // -----------------------------------------------------------------------
+    function loadUrl(url) {
+      const pageUrl = new URL(window.location.href);
+      pageUrl.searchParams.set("url", url);
+      window.location.href = pageUrl.toString();
+    }
+
+    urlInput.addEventListener("keydown", e => {
+      if (e.key === "Enter") {
+        const v = urlInput.value.trim();
+        if (v) loadUrl(v);
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // Drag-and-drop: accept ifc:// URLs dragged onto the page.
+    // Also handles viewer page URLs containing ?url=ifc://...
+    // -----------------------------------------------------------------------
+    document.body.addEventListener("dragover", e => {
+      e.preventDefault();
+      document.body.classList.add("drag-over");
+    });
+    document.body.addEventListener("dragleave", e => {
+      if (!e.relatedTarget) document.body.classList.remove("drag-over");
+    });
+    document.body.addEventListener("drop", e => {
+      e.preventDefault();
+      document.body.classList.remove("drag-over");
+      const candidates = [
+        e.dataTransfer.getData("text/uri-list"),
+        e.dataTransfer.getData("text/plain"),
+      ];
+      for (const blob of candidates) {
+        for (const line of (blob || "").split(/\r?\n/)) {
+          const t = line.trim();
+          if (!t || t.startsWith("#")) continue;
+          if (t.startsWith("ifc://")) { loadUrl(t); return; }
+          try {
+            const u = new URL(t, window.location.href);
+            const p = u.searchParams.get("url");
+            if (p && p.startsWith("ifc://")) { loadUrl(p); return; }
+          } catch { /* not a URL */ }
+        }
+      }
+    });
+
+    // -----------------------------------------------------------------------
+    // Coordinate transforms between IFC world space (Z-up) and Three.js (Y-up).
+    //   IFC → Three.js:  (x, y, z) → (x,  z, -y)
+    //   Three.js → IFC:  (x, y, z) → (x, -z,  y)
+    // -----------------------------------------------------------------------
+    const toIfc   = v => ({ x: v.x, y: -v.z, z: v.y });
+    const toThree = (x, y, z) => new THREE.Vector3(x, z, -y);
+
+    // -----------------------------------------------------------------------
+    // Rebuild the ifc:// URL with the current camera viewpoint in IFC world
+    // coordinates, and push it to the toolbar and browser address bar.
     // -----------------------------------------------------------------------
     function syncCameraUrl(camera) {
       const pos = camera.position;
@@ -71,10 +137,11 @@
       const up = camera.up;
 
       const f = v => parseFloat(v.toFixed(4));
+      const ip = toIfc(pos), id = toIfc(dir), iu = toIfc(up);
       const cameraParam = [
-        f(pos.x), f(pos.y), f(pos.z),
-        f(dir.x), f(dir.y), f(dir.z),
-        f(up.x),  f(up.y),  f(up.z),
+        f(ip.x), f(ip.y), f(ip.z),
+        f(id.x), f(id.y), f(id.z),
+        f(iu.x), f(iu.y), f(iu.z),
       ].join(",");
 
       const qIdx = ifcUrl.indexOf("?");
@@ -90,12 +157,31 @@
       }
       const newIfcUrl = base + "?" + qs.toString().replace(/%2C/g, ",");
 
-      urlEl.textContent = newIfcUrl;
-      urlEl.title       = newIfcUrl;
+      urlInput.value = newIfcUrl;
 
       const pageUrl = new URL(window.location.href);
       pageUrl.searchParams.set("url", newIfcUrl);
       history.replaceState(null, "", pageUrl.toString());
+    }
+
+    // -----------------------------------------------------------------------
+    // If the ifc:// URL contains a camera= param, place the camera there.
+    // Returns true if the camera was positioned from the URL.
+    // -----------------------------------------------------------------------
+    async function applyCameraParam(controls) {
+      const qIdx = ifcUrl.indexOf("?");
+      if (qIdx < 0) return false;
+      const qs = new URLSearchParams(ifcUrl.slice(qIdx + 1));
+      const camStr = qs.get("camera");
+      if (!camStr) return false;
+      const v = camStr.split(",").map(Number);
+      if (v.length < 9 || v.some(isNaN)) return false;
+
+      const pos    = toThree(v[0], v[1], v[2]);
+      const dir    = toThree(v[3], v[4], v[5]);
+      const target = pos.clone().add(dir);
+      await controls.setLookAt(pos.x, pos.y, pos.z, target.x, target.y, target.z, false);
+      return true;
     }
 
     // -----------------------------------------------------------------------
@@ -132,9 +218,11 @@
     // -----------------------------------------------------------------------
     async function main() {
       if (!ifcUrl) {
-        statusEl.textContent = "No ifc:// URL provided.";
+        statusEl.textContent = "Paste an ifc:// URL above or drag one onto the page.";
         return;
       }
+
+      statusEl.textContent = "Loading…";
 
       // --- World setup ---
       const components = new OBC.Components();
@@ -148,7 +236,7 @@
       world.scene.setup();
       components.init();
 
-      // --- FragmentsManager: must be init'd before ifcLoader.load() ---
+      // --- FragmentsManager ---
       // Firefox blocks cross-origin module workers; wrap in a blob URL so the
       // worker is always same-origin regardless of where it was fetched from.
       const fragments = components.get(OBC.FragmentsManager);
@@ -160,7 +248,7 @@
       );
       fragments.init(workerUrl);
 
-      // --- IfcLoader: wasm config goes into setup() ---
+      // --- IfcLoader ---
       const ifcLoader = components.get(OBC.IfcLoader);
       await ifcLoader.setup({
         autoSetWasm: false,
@@ -189,7 +277,8 @@
         world.scene.three.add(model.object);
 
         const box = model.box;
-        if (!box.isEmpty()) {
+        const hasCam = await applyCameraParam(world.camera.controls);
+        if (!hasCam && !box.isEmpty()) {
           await world.camera.controls.fitToBox(box, false);
         }
         model.useCamera(world.camera.three);
