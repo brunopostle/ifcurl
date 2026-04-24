@@ -314,6 +314,19 @@
     }
 
     // -----------------------------------------------------------------------
+    // Apply clip= planes from the ifc:// URL to the Three.js renderer.
+    // Each clip= is 6 floats: point x,y,z + normal x,y,z in IFC world coords.
+    // -----------------------------------------------------------------------
+    function applyClipPlanes(world, clips) {
+      const planes = clips.map(([px, py, pz, nx, ny, nz]) => {
+        const p3 = toThree(px, py, pz);
+        const n3 = toThree(nx, ny, nz).normalize();
+        return new THREE.Plane(n3, -n3.dot(p3));
+      });
+      world.renderer.three.clippingPlanes = planes;
+    }
+
+    // -----------------------------------------------------------------------
     // Apply selector= by isolating matching IFC elements.
     // Supports simple type names and + union: "IfcWall+IfcSlab".
     // Subtypes matched by prefix: IfcWall matches IfcWallStandardCase, etc.
@@ -476,10 +489,17 @@
         }
         model.useCamera(threeCamera);
 
-        const qIdxSel = ifcUrl.indexOf("?");
-        const selectorStr = new URLSearchParams(
-          qIdxSel < 0 ? "" : ifcUrl.slice(qIdxSel + 1)
-        ).get("selector") ?? "";
+        const qIdxPost = ifcUrl.indexOf("?");
+        const qsPost = new URLSearchParams(
+          qIdxPost < 0 ? "" : ifcUrl.slice(qIdxPost + 1)
+        );
+
+        const clips = qsPost.getAll("clip")
+          .map(s => s.split(",").map(Number))
+          .filter(v => v.length === 6 && !v.some(isNaN));
+        if (clips.length) applyClipPlanes(world, clips);
+
+        const selectorStr = qsPost.get("selector") ?? "";
         if (selectorStr) {
           statusEl.textContent = "Applying selector…";
           await applySelector(components, selectorStr);
