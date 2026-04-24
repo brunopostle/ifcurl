@@ -214,6 +214,55 @@ No build step — loads dependencies from CDN.
 - FOV control, camera sync — the URL in the browser bar always reflects the
   current view and is shareable
 - Drag-and-drop ifc:// URLs onto the page
+- **Click to identify** — click any element to see its IFC type, name, and
+  GlobalId in a side panel; copy GlobalId to clipboard for use in selectors
+- **⎘ copy** button — copies the current ifc:// URL to clipboard
+- **Issue** button — opens a new issue on the git host with the ifc:// URL
+  pre-filled in the body (works for Forgejo, GitHub, GitLab)
+- **BCF export** — exports the current view (camera, clipping planes, selected
+  elements) as a BCF 2.1 file for import into Revit, Navisworks, etc.
+- Download progress — shows percentage or MB while fetching large IFC files
+
+### Collaboration workflow
+
+`ifc://` URLs function as view permalinks that can be embedded anywhere:
+Forgejo issues and comments, pull request discussions, markdown documentation,
+Slack, or email.
+
+**Basic flow:**
+
+1. Open the viewer and navigate to the view you want to share
+2. Add clipping planes or a selector to isolate the relevant geometry
+3. Click **⎘** to copy the ifc:// URL, or **Issue** to open a pre-filled issue
+4. Paste the URL into a Forgejo issue, PR comment, or any markdown file —
+   Forgejo will render it inline as a linked preview image
+
+**Referencing specific elements:**
+
+Click any element to see its GlobalId. Copy the GlobalId and paste it directly
+as the `selector=` value — a bare 22-character GlobalId selects that one element
+(e.g., `selector=325Q7Fhnf67OZC$$r43uzK`). Use `visibility=highlight`, `ghost`,
+or `isolate` to control how the selection is displayed.
+
+**BCF export for external tools:**
+
+Use the **BCF** button to export a BCF 2.1 file. The resulting `.bcf` can be
+attached to a Forgejo issue as a file, or imported into Revit, Navisworks,
+Solibri, or any BCF-compatible tool to communicate the exact viewpoint and
+element selection to contractors or consultants using proprietary software.
+
+### Authentication
+
+When the viewer is served from the same Forgejo instance
+(`https://git.example.com/assets/viewer.html`), it shares the browser session
+cookie. Any IFC file that the logged-in user can access on that Forgejo instance
+loads without extra configuration — private repositories work automatically for
+authenticated users.
+
+IFC files hosted on other platforms (GitHub, GitLab, a different Forgejo
+instance) are fetched directly from the browser. Only public repositories work
+for external hosts; there is currently no authentication path for external
+private repositories in the browser viewer.
 
 ---
 

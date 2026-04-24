@@ -63,7 +63,7 @@ Tier 4: full URL hash → rendered PNG (**never** applied to mutable refs like `
 ## Key domain facts
 
 - All spatial values (`camera`, `clip`) are in IFC world coordinates, matching BCF viewpoint conventions — not georeferenced survey coordinates.
-- The `selector` parameter uses IfcOpenShell selector syntax. `+` joins selector groups (union); `,` separates filters within a group.
+- The `selector` parameter uses IfcOpenShell selector syntax. `+` joins selector groups (union); `,` separates filters within a group. **`[attr=val]` bracket notation is NOT valid** — the correct form is `IfcWall, Name="Core Wall"`. A bare 22-char GlobalId selects a single element: `selector=325Q7Fhnf67OZC$$r43uzK`.
 - `IFCDOCUMENTREFERENCE` location fields may be relative paths (resolved within the same repo/ref), absolute local paths (desktop only), or `ifc://` URLs (cross-repo federation).
 - BCF ↔ IFC URL conversion is defined in `SPECIFICATION.md` §6.
 

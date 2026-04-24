@@ -71,6 +71,31 @@
       background: rgba(28,28,30,0.7);
       pointer-events: none;
     }
+    /* Element properties panel */
+    #props-panel {
+      position: fixed; bottom: 44px; right: 12px; z-index: 10;
+      background: rgba(28,28,30,0.92); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+      padding: 8px 10px; min-width: 200px; max-width: 320px;
+    }
+    #props-panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    #props-panel-header span {
+      font-size: 10px; color: #606068;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    #props-panel .prop-row {
+      display: flex; align-items: baseline; gap: 6px; margin-top: 3px;
+    }
+    #props-panel .prop-label {
+      font-size: 10px; color: #808088; flex-shrink: 0; width: 46px;
+    }
+    #props-panel .prop-value {
+      font-size: 12px; color: #f0f0f0; font-family: monospace;
+      flex: 1; word-break: break-all;
+    }
   </style>
   <script type="importmap">
   {
@@ -95,6 +120,8 @@
       <button id="clip-btn" class="tb-btn" title="Double-click model surface to add clipping plane">✂ clip</button>
       <button id="clip-clear-btn" class="tb-btn" title="Remove all clipping planes" style="display:none">⊗ clips</button>
       <button id="bcf-btn" class="tb-btn" title="Export current view as a BCF issue">BCF</button>
+      <button id="copy-url-btn" class="tb-btn" title="Copy ifc:// URL to clipboard">⎘</button>
+      <button id="new-issue-btn" class="tb-btn" title="Open new issue with this view URL">Issue</button>
       <div id="fov-wrap">
         FOV <input id="fov-input" class="ti" type="number" min="10" max="120" step="1"
                    title="Field of view (degrees)">°
@@ -139,6 +166,25 @@
   </div>
   <div id="viewer"></div>
   <div id="status"></div>
+  <div id="props-panel" style="display:none">
+    <div id="props-panel-header">
+      <span>Element</span>
+      <button id="props-close-btn" class="tb-btn">✕</button>
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">type</span>
+      <span id="props-type" class="prop-value"></span>
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">name</span>
+      <span id="props-name" class="prop-value"></span>
+    </div>
+    <div class="prop-row">
+      <span class="prop-label">GlobalId</span>
+      <span id="props-guid" class="prop-value"></span>
+      <button id="props-copy-btn" class="tb-btn" title="Copy GlobalId to clipboard">⎘</button>
+    </div>
+  </div>
 
   <script type="module">
     import * as THREE from "three";
@@ -156,6 +202,14 @@
     const refInput      = document.getElementById("ref-input");
     const pathInput     = document.getElementById("path-input");
     const selectorInput = document.getElementById("selector-input");
+    const copyUrlBtn    = document.getElementById("copy-url-btn");
+    const newIssueBtn   = document.getElementById("new-issue-btn");
+    const propsPanel    = document.getElementById("props-panel");
+    const propsType     = document.getElementById("props-type");
+    const propsName     = document.getElementById("props-name");
+    const propsGuid     = document.getElementById("props-guid");
+    const propsCopyBtn  = document.getElementById("props-copy-btn");
+    const propsCloseBtn = document.getElementById("props-close-btn");
 
     // Keep viewer below the full toolbar height.
     const resizeObs = new ResizeObserver(() => {
@@ -225,6 +279,44 @@
     bcfExportBtn.addEventListener("click", async () => {
       await generateBcf(bcfTitleIn.value.trim(), bcfCommentIn.value.trim());
       bcfPanelOpen(false);
+    });
+
+    copyUrlBtn.addEventListener("click", async () => {
+      if (threeCamera) syncCameraUrl(threeCamera);
+      const url = urlInput.value.trim();
+      if (!url) return;
+      try {
+        await navigator.clipboard.writeText(url);
+        const saved = copyUrlBtn.textContent;
+        copyUrlBtn.textContent = "✓";
+        setTimeout(() => { copyUrlBtn.textContent = saved; }, 1500);
+      } catch {
+        urlInput.select();
+      }
+    });
+
+    newIssueBtn.addEventListener("click", () => {
+      if (threeCamera) syncCameraUrl(threeCamera);
+      const src = urlInput.value.trim();
+      if (!src) return;
+      const p = parseIfcUrl(src);
+      if (!p || !p.host || !p.repoSuffix) return;
+      const title = p.path ? `IFC view: ${p.path}` : "IFC view";
+      const issueUrl = `https://${p.host}/${p.repoSuffix}/issues/new` +
+        `?title=${encodeURIComponent(title)}&body=${encodeURIComponent(src)}`;
+      window.open(issueUrl, "_blank", "noopener");
+    });
+
+    propsCloseBtn.addEventListener("click", () => { propsPanel.style.display = "none"; });
+    propsCopyBtn.addEventListener("click", async () => {
+      const guid = propsGuid.textContent;
+      if (!guid) return;
+      try {
+        await navigator.clipboard.writeText(guid);
+        const saved = propsCopyBtn.textContent;
+        propsCopyBtn.textContent = "✓";
+        setTimeout(() => { propsCopyBtn.textContent = saved; }, 1500);
+      } catch { /* ignore */ }
     });
 
     const allInputs = [urlInput, fovInput, repoInput, refInput, pathInput, selectorInput,
@@ -566,6 +658,21 @@
     }
 
     // -----------------------------------------------------------------------
+    // Element properties panel
+    // -----------------------------------------------------------------------
+    function showPropsPanel(props, webIfc) {
+      let typeName = String(props.type ?? "");
+      try {
+        const name = webIfc?.GetNameFromTypeCode(props.type);
+        if (name) typeName = name;
+      } catch { /* not available in this version */ }
+      propsType.textContent = typeName;
+      propsName.textContent = props.Name?.value ?? props.LongName?.value ?? "";
+      propsGuid.textContent = props.GlobalId?.value ?? "";
+      propsPanel.style.display = "";
+    }
+
+    // -----------------------------------------------------------------------
     // Main
     // -----------------------------------------------------------------------
     async function main() {
@@ -610,7 +717,29 @@
       try {
         const resp = await fetch(toRawUrl(ifcUrl));
         if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
-        buffer = new Uint8Array(await resp.arrayBuffer());
+        const contentLength = resp.headers.get("Content-Length");
+        const total = contentLength ? parseInt(contentLength, 10) : 0;
+        const reader = resp.body?.getReader();
+        if (reader) {
+          const chunks = [];
+          let received = 0;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            received += value.length;
+            if (total > 0) {
+              statusEl.textContent = `Fetching… ${Math.round(received * 100 / total)}%`;
+            } else {
+              statusEl.textContent = `Fetching… ${(received / 1048576).toFixed(1)} MB`;
+            }
+          }
+          buffer = new Uint8Array(received);
+          let offset = 0;
+          for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.length; }
+        } else {
+          buffer = new Uint8Array(await resp.arrayBuffer());
+        }
       } catch (err) {
         statusEl.textContent = `Fetch error: ${err.message}`;
         return;
@@ -644,6 +773,26 @@
         }
 
         await fragments.core.update(true);
+
+        // Click-to-identify: highlight element and show its properties.
+        try {
+          const highlighter = components.get(OBC.Highlighter);
+          highlighter.setup({ world });
+          highlighter.events.select.onHighlight.add(async (fragmentIdMap) => {
+            for (const expressIds of Object.values(fragmentIdMap)) {
+              const expressId = [...expressIds][0];
+              if (expressId == null) continue;
+              const props = await model.getLocalProperties(expressId);
+              if (props) showPropsPanel(props, ifcLoader.webIfc);
+              return;
+            }
+          });
+          highlighter.events.select.onClear.add(() => {
+            propsPanel.style.display = "none";
+          });
+        } catch (err) {
+          console.warn("Highlighter unavailable:", err.message);
+        }
 
         syncCameraUrl(threeCamera);
         cameraControls.addEventListener("rest", () => syncCameraUrl(threeCamera));
