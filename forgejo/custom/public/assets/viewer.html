@@ -314,6 +314,39 @@
     }
 
     // -----------------------------------------------------------------------
+    // Apply selector= by isolating matching IFC elements.
+    // Supports simple type names and + union: "IfcWall+IfcSlab".
+    // Subtypes matched by prefix: IfcWall matches IfcWallStandardCase, etc.
+    // Attribute/property filters (.Name=, #id, [pset]) are not yet supported.
+    // -----------------------------------------------------------------------
+    async function applySelector(components, selectorStr) {
+      const userTypes = selectorStr
+        .split("+")
+        .map(g => g.trim().replace(/[.,\s#[].*/s, "").trim().toUpperCase())
+        .filter(Boolean);
+      if (!userTypes.length) return;
+
+      const classifier = components.get(OBC.Classifier);
+      await classifier.byCategory();
+
+      const categoryGroups = classifier.list.get("Categories");
+      if (!categoryGroups) return;
+
+      const matchingCategories = [];
+      for (const [cat] of categoryGroups) {
+        if (userTypes.some(t => cat === t || cat.startsWith(t)))
+          matchingCategories.push(cat);
+      }
+      if (!matchingCategories.length) return;
+
+      const matching = await classifier.find({ Categories: matchingCategories });
+      if (!matching || Object.keys(matching).length === 0) return;
+
+      const hider = components.get(OBC.Hider);
+      await hider.isolate(matching);
+    }
+
+    // -----------------------------------------------------------------------
     // Place the camera from ifc:// URL camera=/fov=/scale= params.
     // -----------------------------------------------------------------------
     async function applyCameraParam(controls, camera) {
@@ -442,6 +475,16 @@
           await cameraControls.fitToBox(model.box, false);
         }
         model.useCamera(threeCamera);
+
+        const qIdxSel = ifcUrl.indexOf("?");
+        const selectorStr = new URLSearchParams(
+          qIdxSel < 0 ? "" : ifcUrl.slice(qIdxSel + 1)
+        ).get("selector") ?? "";
+        if (selectorStr) {
+          statusEl.textContent = "Applying selector…";
+          await applySelector(components, selectorStr);
+        }
+
         await fragments.core.update(true);
 
         syncCameraUrl(threeCamera);
