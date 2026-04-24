@@ -38,7 +38,6 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import os
-import tempfile
 import threading
 import time
 
@@ -225,18 +224,10 @@ def _t4m_put(url: str, png: bytes) -> None:
 # ---------------------------------------------------------------------------
 
 def _load_model(ifc_bytes: bytes) -> ifcopenshell.file:
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".ifc")
     try:
-        os.write(tmp_fd, ifc_bytes)
-        os.close(tmp_fd)
-        return ifcopenshell.open(tmp_path)
+        return ifcopenshell.file.from_string(ifc_bytes.decode())
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Could not parse IFC file: {exc}") from exc
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
 
 
 # ---------------------------------------------------------------------------

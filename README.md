@@ -88,7 +88,6 @@ ifcurl render "ifc://..." -o output.png
 Use as a library:
 
 ```python
-import os, tempfile
 import ifcopenshell
 from ifcurl import IfcUrl, fetch_ifc
 from ifcurl.render import render
@@ -98,15 +97,7 @@ url = IfcUrl.parse(
     "?path=models/building.ifc&selector=IfcWall&visibility=ghost"
 )
 hexsha, ifc_bytes = fetch_ifc(url)   # hexsha is stable even for mutable refs
-
-# ifcopenshell.open() requires a file path, not bytes
-tmp_fd, tmp_path = tempfile.mkstemp(suffix=".ifc")
-try:
-    os.write(tmp_fd, ifc_bytes)
-    os.close(tmp_fd)
-    model = ifcopenshell.open(tmp_path)
-finally:
-    os.unlink(tmp_path)
+model = ifcopenshell.file.from_string(ifc_bytes.decode())
 
 png = render(model, selector=url.selector, clips=url.clips or None,
              camera=url.camera, fov=url.fov, visibility=url.visibility)
