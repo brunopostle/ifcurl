@@ -123,6 +123,7 @@
   <script type="module">
     import * as THREE from "three";
     import * as OBC from "@thatopen/components";
+    import { parseIfcUrl, toRawUrl, buildIfcUrl as _buildIfcUrl } from "./viewer-url.js";
 
     const params   = new URLSearchParams(window.location.search);
     const ifcUrl   = params.get("url") ?? "";
@@ -145,55 +146,12 @@
     let threeCamera    = null;
     let activeClipper  = null;
 
-    // -----------------------------------------------------------------------
-    // Parse an ifc:// URL into its components.
-    // -----------------------------------------------------------------------
-    function parseIfcUrl(raw) {
-      if (!raw?.startsWith("ifc://")) return null;
-      const body = raw.slice("ifc://".length);
-
-      const slashIdx    = body.indexOf("/");
-      const authority   = slashIdx < 0 ? body : body.slice(0, slashIdx);
-      const pathAndQuery = slashIdx < 0 ? "" : body.slice(slashIdx + 1);
-
-      const atInAuth = authority.indexOf("@");
-      const userAt   = atInAuth < 0 ? "" : authority.slice(0, atInAuth + 1);
-      const host     = atInAuth < 0 ? authority : authority.slice(atInAuth + 1);
-
-      const qIdx    = pathAndQuery.indexOf("?");
-      const pathPart = qIdx < 0 ? pathAndQuery : pathAndQuery.slice(0, qIdx);
-      const qs       = new URLSearchParams(qIdx < 0 ? "" : pathAndQuery.slice(qIdx + 1));
-
-      const atIdx    = pathPart.lastIndexOf("@");
-      const repoSuffix = atIdx < 0 ? pathPart : pathPart.slice(0, atIdx);
-      const ref        = atIdx < 0 ? "" : pathPart.slice(atIdx + 1);
-
-      return {
-        repo:     userAt + host + "/" + repoSuffix,
-        host, userAt, repoSuffix, ref,
-        path:     qs.get("path")     ?? "",
-        selector: qs.get("selector") ?? "",
-        camera:   qs.get("camera")   ?? "",
-        fov:      qs.get("fov")      ?? "",
-        scale:    qs.get("scale")    ?? "",
-      };
-    }
-
-    // -----------------------------------------------------------------------
-    // Build an ifc:// URL from structured fields (no camera — will fit to box).
-    // -----------------------------------------------------------------------
+    // Build an ifc:// URL from the structured form fields.
     function buildIfcUrl() {
-      const repo = repoInput.value.trim();
-      const ref  = refInput.value.trim();
-      const path = pathInput.value.trim();
-      const sel  = selectorInput.value.trim();
-      if (!repo || !ref) return null;
-
-      const qs = new URLSearchParams();
-      if (path) qs.set("path", path);
-      if (sel)  qs.set("selector", sel);
-      const qsStr = qs.toString().replace(/%2C/g, ",");
-      return `ifc://${repo}@${ref}${qsStr ? "?" + qsStr : ""}`;
+      return _buildIfcUrl(
+        repoInput.value.trim(), refInput.value.trim(),
+        pathInput.value.trim(), selectorInput.value.trim()
+      );
     }
 
     // Populate structured fields from the current ifcUrl.
@@ -327,7 +285,7 @@
         }
       }
 
-      const newIfcUrl = base + "?" + qs.toString().replace(/%2C/g, ",");
+      const newIfcUrl = base + "?" + qs.toString().replace(/%2C/g, ",").replace(/%2B/g, "+");
 
       urlInput.value = newIfcUrl;
 
@@ -444,47 +402,6 @@
         fovInput.value = Math.round(camera.fov);
       }
       return true;
-    }
-
-    // -----------------------------------------------------------------------
-    // Convert an ifc:// URL to an HTTPS raw file URL.
-    // Handles SSH user@ prefix, GitHub, GitLab, and Forgejo/Gitea.
-    // -----------------------------------------------------------------------
-    function toRawUrl(raw) {
-      const body = raw.slice("ifc://".length);
-
-      const slashIdx    = body.indexOf("/");
-      const authority   = slashIdx < 0 ? body : body.slice(0, slashIdx);
-      const pathAndQuery = slashIdx < 0 ? "" : body.slice(slashIdx + 1);
-
-      const atInAuth = authority.indexOf("@");
-      const host = atInAuth < 0 ? authority : authority.slice(atInAuth + 1);
-
-      const qIdx    = pathAndQuery.indexOf("?");
-      const pathPart = qIdx < 0 ? pathAndQuery : pathAndQuery.slice(0, qIdx);
-      const qs       = new URLSearchParams(qIdx < 0 ? "" : pathAndQuery.slice(qIdx + 1));
-      const filePath = qs.get("path") ?? "";
-
-      const atIdx    = pathPart.lastIndexOf("@");
-      const repoPath = atIdx < 0 ? pathPart : pathPart.slice(0, atIdx);
-      const ref      = atIdx < 0 ? "" : pathPart.slice(atIdx + 1);
-
-      const plainRef = ref.startsWith("heads/") ? ref.slice(6)
-                     : ref.startsWith("tags/")  ? ref.slice(5)
-                     : ref;
-
-      if (host === "github.com" || host.endsWith(".github.com")) {
-        return `https://raw.githubusercontent.com/${repoPath}/${plainRef}/${filePath}`;
-      }
-      if (host === "gitlab.com" || host.includes("gitlab")) {
-        const proto = host.startsWith("localhost") ? "http" : "https";
-        return `${proto}://${host}/${repoPath}/-/raw/${plainRef}/${filePath}`;
-      }
-      const refSeg = ref.startsWith("heads/") ? "branch/" + ref.slice(6)
-                   : ref.startsWith("tags/")  ? "tag/"    + ref.slice(5)
-                   : "commit/" + ref;
-      const proto = host.startsWith("localhost") ? "http" : "https";
-      return `${proto}://${host}/${repoPath}/raw/${refSeg}/${filePath}`;
     }
 
     // -----------------------------------------------------------------------
