@@ -43,6 +43,14 @@ class TestFetchIfc:
         hexsha, data = fetch_ifc(url)
         assert hexsha == local_ifc_repo["hexsha"]
 
+    def test_branch_ref(self, local_ifc_repo):
+        import git as gitpkg
+        branch = gitpkg.Repo(local_ifc_repo["path"]).active_branch.name
+        url = _local_url(local_ifc_repo["path"], ref=f"heads/{branch}")
+        hexsha, data = fetch_ifc(url)
+        assert hexsha == local_ifc_repo["hexsha"]
+        assert data == local_ifc_repo["bytes"]
+
     def test_bad_ref_raises(self, local_ifc_repo):
         url = _local_url(local_ifc_repo["path"], ref="heads/nonexistent")
         with pytest.raises(ValueError, match="not found"):

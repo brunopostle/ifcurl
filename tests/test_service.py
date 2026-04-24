@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from ifcurl.service import _t2_cache, _t3_cache, app
+from ifcurl.service import _t2_cache, _t3_cache, _t2_get, _t2_put, app, configure_allowed_hosts
 
 client = TestClient(app)
 
@@ -25,13 +25,15 @@ SELECTOR_URL = "ifc://example.com/org/repo@heads/main?path=model.ifc&selector=If
 
 @pytest.fixture(autouse=True)
 def clear_caches(tmp_path, monkeypatch):
-    """Reset in-memory caches and redirect filesystem PNG cache between tests."""
+    """Reset in-memory caches, redirect filesystem PNG cache, and reset allowed-hosts between tests."""
     monkeypatch.setattr("ifcurl.service.user_cache_dir", lambda *a, **kw: str(tmp_path))
     _t2_cache.clear()
     _t3_cache.clear()
+    configure_allowed_hosts(None)
     yield
     _t2_cache.clear()
     _t3_cache.clear()
+    configure_allowed_hosts(None)
 
 
 @pytest.fixture()
@@ -287,3 +289,111 @@ class TestAuthentication:
             client.post("/preview", json={"url": MUTABLE_URL, "token": "request_token"})
 
         assert received_token == ["request_token"]
+
+
+# ---------------------------------------------------------------------------
+# GET /preview endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestGetEndpoint:
+    def test_get_returns_png(self, model_with_geometry):
+        ifc_bytes = model_with_geometry.to_string().encode()
+        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
+             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+            r = client.get("/preview", params={"url": MUTABLE_URL})
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "image/png"
+        assert r.content == FAKE_PNG
+
+    def test_get_invalid_scheme_returns_400(self):
+        r = client.get("/preview", params={"url": "https://example.com/model.ifc"})
+        assert r.status_code == 400
+
+    def test_get_local_transport_rejected(self):
+        r = client.get("/preview", params={"url": "ifc:///some/path@HEAD?path=m.ifc"})
+        assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: LRU eviction
+# ---------------------------------------------------------------------------
+
+
+class TestTier2Eviction:
+    def test_oldest_entry_evicted_at_max(self, monkeypatch):
+        monkeypatch.setattr("ifcurl.service._T2_MAX", 2)
+        _t2_put("sha_a", "a.ifc", b"data_a")
+        _t2_put("sha_b", "b.ifc", b"data_b")
+        _t2_put("sha_c", "c.ifc", b"data_c")  # should evict sha_a
+        assert _t2_get("sha_a", "a.ifc") is None
+        assert _t2_get("sha_b", "b.ifc") == b"data_b"
+        assert _t2_get("sha_c", "c.ifc") == b"data_c"
+
+    def test_get_promotes_entry(self, monkeypatch):
+        monkeypatch.setattr("ifcurl.service._T2_MAX", 2)
+        _t2_put("sha_a", "a.ifc", b"data_a")
+        _t2_put("sha_b", "b.ifc", b"data_b")
+        _t2_get("sha_a", "a.ifc")             # promote sha_a to most-recent
+        _t2_put("sha_c", "c.ifc", b"data_c")  # should evict sha_b (now oldest)
+        assert _t2_get("sha_a", "a.ifc") == b"data_a"
+        assert _t2_get("sha_b", "b.ifc") is None
+        assert _t2_get("sha_c", "c.ifc") == b"data_c"
+
+    def test_cache_miss_returns_none(self):
+        assert _t2_get("nonexistent", "x.ifc") is None
+
+
+# ---------------------------------------------------------------------------
+# SSRF protection
+# ---------------------------------------------------------------------------
+
+
+class TestSSRF:
+    def test_local_transport_always_rejected(self):
+        r = client.post("/preview", json={"url": "ifc:///some/path@HEAD?path=m.ifc"})
+        assert r.status_code == 403
+        assert "local" in r.json()["detail"].lower()
+
+    def test_host_not_in_allowlist_rejected(self):
+        configure_allowed_hosts({"allowed.example.com"})
+        r = client.post("/preview", json={"url": MUTABLE_URL})  # host: example.com
+        assert r.status_code == 403
+        assert "allowed-hosts" in r.json()["detail"].lower()
+
+    def test_host_in_allowlist_permitted(self, model_with_geometry):
+        configure_allowed_hosts({"example.com"})
+        ifc_bytes = model_with_geometry.to_string().encode()
+        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
+             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+            r = client.post("/preview", json={"url": MUTABLE_URL})
+        assert r.status_code == 200
+
+    def test_no_allowlist_permits_public_host(self, model_with_geometry):
+        ifc_bytes = model_with_geometry.to_string().encode()
+        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
+             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+            r = client.post("/preview", json={"url": MUTABLE_URL})
+        assert r.status_code == 200
+
+    def test_loopback_ip_rejected_without_allowlist(self):
+        r = client.post("/preview", json={"url": "ifc://127.0.0.1/org/repo@HEAD?path=m.ifc"})
+        assert r.status_code == 403
+
+    def test_private_ip_rejected_without_allowlist(self):
+        r = client.post("/preview", json={"url": "ifc://192.168.1.1/org/repo@HEAD?path=m.ifc"})
+        assert r.status_code == 403
+
+    def test_link_local_ip_rejected_without_allowlist(self):
+        r = client.post("/preview", json={"url": "ifc://169.254.169.254/org/repo@HEAD?path=m.ifc"})
+        assert r.status_code == 403
+
+    def test_allowlist_with_port(self, model_with_geometry):
+        configure_allowed_hosts({"localhost:3000"})
+        ifc_bytes = model_with_geometry.to_string().encode()
+        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
+             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+            r = client.post("/preview", json={
+                "url": "ifc://localhost:3000/org/repo@heads/main?path=model.ifc"
+            })
+        assert r.status_code == 200
