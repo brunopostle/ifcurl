@@ -17,7 +17,7 @@ Four interlocking components:
 | Component | Language | What it does |
 |---|---|---|
 | **Python library + CLI** | Python | Parse ifc:// URLs, fetch IFC from git, render PNG |
-| **Preview service** | Python | HTTP server — PNGs on demand, IFC file proxy |
+| **Preview service** | Python | HTTP server — PNGs on demand |
 | **Forgejo integration** | Go + assets | Inline markdown previews, "View in 3D" button |
 | **Browser viewer** | JavaScript | Interactive WebGL viewer, served as a Forgejo asset |
 
@@ -183,8 +183,10 @@ sudo cp forgejo/custom/public/assets/viewer*.* /etc/forgejo/public/assets/
 sudo cp forgejo/templates/custom/footer.tmpl /var/lib/forgejo/custom/templates/custom/
 sudo systemctl restart forgejo
 
-# Start preview service (restrict to this Forgejo host)
-ifcurl serve --allowed-hosts git.example.com
+# Install and start preview service as a systemd unit
+sudo cp forgejo/server-config/ifcurl-preview.service /etc/systemd/system/
+# edit ExecStart --allowed-hosts to match your Forgejo hostname, then:
+sudo systemctl enable --now ifcurl-preview
 ```
 
 Add to `/etc/forgejo/conf/app.ini`:

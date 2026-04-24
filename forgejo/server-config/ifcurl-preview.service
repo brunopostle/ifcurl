@@ -1,0 +1,24 @@
+[Unit]
+Description=ifcurl preview service
+Documentation=https://github.com/brunopostle/ifcurl
+After=network.target
+
+[Service]
+Type=simple
+User=ifcurl
+Group=ifcurl
+EnvironmentFile=-/etc/ifcurl/env
+ExecStart=/usr/local/bin/ifcurl serve \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --allowed-hosts git.example.com
+Restart=on-failure
+RestartSec=5
+
+# Cache configuration — override in /etc/ifcurl/env:
+#   IFCURL_CACHE_MAX_GB=10   max bare-repo disk cache
+#   IFCURL_T2_MAX=8          max IFC blobs in memory
+#   IFCURL_T3_MAX=64         max selector results in memory
+
+[Install]
+WantedBy=multi-user.target

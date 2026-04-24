@@ -25,6 +25,9 @@ forgejo/
     viewer-url.js                       ← viewer URL logic module
   templates/custom/
     footer.tmpl                         ← "View in 3D" button injection
+  server-config/
+    ifcurl-preview.service              ← systemd unit for the preview service
+    gitconfig-ifcmerge                  ← git merge driver config for .ifc files
 ```
 
 ---
@@ -116,10 +119,40 @@ sudo systemctl restart forgejo
 
 ---
 
-## Starting the preview service
+## Running the preview service
 
-Run the preview service co-located with Forgejo, passing `--allowed-hosts`
-set to your Forgejo hostname so the service will only fetch from that instance:
+### As a systemd service (recommended)
+
+A systemd unit is provided at `server-config/ifcurl-preview.service`.
+
+```bash
+# Create a dedicated user
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin ifcurl
+
+# Install the unit (edit AllowedHosts and port first)
+sudo cp forgejo/server-config/ifcurl-preview.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ifcurl-preview
+```
+
+Edit the `ExecStart` line to set your Forgejo hostname:
+
+```ini
+ExecStart=/usr/local/bin/ifcurl serve \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --allowed-hosts git.example.com
+```
+
+Cache limits and other environment variables can be set in
+`/etc/ifcurl/env` (one `KEY=value` per line):
+
+```bash
+IFCURL_CACHE_MAX_GB=10
+IFCURL_T2_MAX=16
+```
+
+### Manually (for testing)
 
 ```bash
 ifcurl serve --allowed-hosts git.example.com
@@ -147,6 +180,72 @@ PREVIEW_SERVICE_URL = http://localhost:8000
 Set `PREVIEW_SERVICE_URL` to the base URL of the running ifcurl preview
 service. If left empty, ifc:// links in markdown render as plain links with
 no preview image.
+
+---
+
+## IFC merge driver (ifcmerge)
+
+Configuring `ifcmerge` as the git merge driver for `.ifc` files lets Forgejo
+automatically merge IFC pull requests instead of marking them as conflicted.
+
+### Prerequisites
+
+`ifcmerge` is a single Perl script from
+[github.com/brunopostle/ifcmerge](https://github.com/brunopostle/ifcmerge).
+Download and install it on the Forgejo server:
+
+```bash
+curl -o /usr/local/bin/ifcmerge \
+  https://raw.githubusercontent.com/brunopostle/ifcmerge/main/ifcmerge
+chmod +x /usr/local/bin/ifcmerge
+```
+
+Verify it is on `PATH` for the `forgejo` system user:
+
+```bash
+sudo -u forgejo which ifcmerge
+```
+
+### Register the merge drivers
+
+Append `server-config/gitconfig-ifcmerge` to the server's global git config:
+
+```bash
+sudo git config --system --add include.path /path/to/forgejo/server-config/gitconfig-ifcmerge
+```
+
+Or copy the two `[merge "…"]` blocks directly into `/etc/gitconfig`.
+
+### Set the per-repository gitattributes
+
+Add a `.gitattributes` file to each IFC repository:
+
+```
+*.ifc merge=ifcmerge
+```
+
+Or set a server-wide default by adding to
+`/usr/share/git-core/templates/info/attributes` (applied to all newly
+initialised repos):
+
+```
+*.ifc merge=ifcmerge
+```
+
+### Merge direction
+
+The merge driver is asymmetrical: `ifcmerge` rewrites STEP IDs from `%B`
+(theirs) to match `%A` (ours), so `%A`'s ID space is preserved in the
+merged file.
+
+For Forgejo, use the **"Merge commit"** strategy (not rebase or squash).
+With a merge commit, `%A` is always the base branch (e.g. `main`) and
+`%B` is the pull-request branch — so `main`'s STEP IDs are preserved and
+existing cross-references remain valid.
+
+A second driver `ifcmerge_ours` is defined in the config file for cases
+where the base branch arrives as `%B`; see the comments in
+`server-config/gitconfig-ifcmerge` for details.
 
 ---
 

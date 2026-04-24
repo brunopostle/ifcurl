@@ -1,0 +1,19 @@
+# Add to /etc/gitconfig (or ~forgejo/.gitconfig) on the Forgejo server.
+#
+# Two drivers are registered because the merge is asymmetrical — ifcmerge
+# rewrites STEP IDs from %B to match %A's ID space.  The base-branch must
+# always be %A so its IDs are preserved.
+#
+#   ifcmerge        — use when the base branch is %A (standard 'merge commit')
+#   ifcmerge_ours   — use when the base branch is %B (rebase direction);
+#                     swaps the roles so base-branch IDs are still preserved.
+#                     Requires ifcmerge to support --prefer-other; if not,
+#                     use 'merge commit' strategy exclusively and omit this.
+
+[merge "ifcmerge"]
+    name = IFC merge driver (base is ours)
+    driver = ifcmerge %O %A %B %L
+
+[merge "ifcmerge_ours"]
+    name = IFC merge driver (base is theirs)
+    driver = ifcmerge %O %B %A %L
