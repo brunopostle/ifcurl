@@ -2,30 +2,15 @@
 // Copyright 2026 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
 //
-// ifcurl — inject "View in 3D" button on .ifc file view pages.
+// ifcurl — inject "View in 3D" button on .ifc file view and history pages.
 //
 // Deploy to: /etc/forgejo/templates/custom/footer.tmpl
 //
-// Uses the permalink href (always a full commit hash) to construct an
-// unambiguous ifc:// URL regardless of branch names containing slashes.
+// Uses commit-hash hrefs (always unambiguous) to construct ifc:// URLs.
 (function () {
   "use strict";
 
   var VIEWER_BASE = "/assets/viewer.html";
-
-  // -------------------------------------------------------------------------
-  // Find a commit-based href on this page.
-  // Case 1: viewing at a branch/tag — permalink button is present.
-  // Case 2: already viewing at a commit — current URL contains /src/commit/.
-  // -------------------------------------------------------------------------
-  function commitHref() {
-    var a = document.querySelector('a[href*="/src/commit/"]');
-    if (a) return a.getAttribute("href");
-    if (/\/src\/commit\//.test(window.location.pathname)) {
-      return window.location.pathname;
-    }
-    return null;
-  }
 
   // Parse /owner/repo/src/commit/{40hex}/{treepath}
   // Returns {repoPath, hash, treePath} or null.
@@ -35,31 +20,49 @@
     return { repoPath: m[1], hash: m[2], treePath: m[3] };
   }
 
+  function makeViewerLink(info, label, cls) {
+    var host   = window.location.host;
+    var ifcUrl = "ifc://" + host + "/" + info.repoPath
+               + "@" + info.hash
+               + "?path=" + encodeURIComponent(info.treePath);
+    var a = document.createElement("a");
+    a.href       = VIEWER_BASE + "?url=" + encodeURIComponent(ifcUrl);
+    a.target     = "_blank";
+    a.rel        = "noopener noreferrer";
+    a.className  = cls || "ui mini basic button";
+    a.textContent = label;
+    return a;
+  }
+
   function init() {
-    var href = commitHref();
-    if (!href) return;
+    var host = window.location.host;
 
-    var info = parseCommitHref(href);
-    if (!info) return;
-    if (!info.treePath.toLowerCase().endsWith(".ifc")) return;
-
-    var host    = window.location.host;
-    var ifcUrl  = "ifc://" + host + "/" + info.repoPath
-                + "@" + info.hash
-                + "?path=" + encodeURIComponent(info.treePath);
-    var viewUrl = VIEWER_BASE + "?url=" + encodeURIComponent(ifcUrl);
-
-    // Insert button alongside the existing Raw / Permalink / History buttons.
+    // -----------------------------------------------------------------------
+    // Case 1: single file view — permalink button in .file-header-right.
+    // -----------------------------------------------------------------------
     var btnGroup = document.querySelector(".file-header-right .ui.buttons");
-    if (!btnGroup) return;
+    if (btnGroup) {
+      // Permalink href or current URL when already at a commit.
+      var a = document.querySelector('a[href*="/src/commit/"]');
+      var href = a ? a.getAttribute("href") : window.location.pathname;
+      var info = parseCommitHref(href);
+      if (info && info.treePath.toLowerCase().endsWith(".ifc")) {
+        btnGroup.appendChild(makeViewerLink(info, "View in 3D"));
+      }
+      return;
+    }
 
-    var btn = document.createElement("a");
-    btn.href      = viewUrl;
-    btn.target    = "_blank";
-    btn.rel       = "noopener noreferrer";
-    btn.className = "ui mini basic button";
-    btn.textContent = "View in 3D";
-    btnGroup.appendChild(btn);
+    // -----------------------------------------------------------------------
+    // Case 2: file history page — inject a "3D" link next to each commit's
+    // browse-file link (/src/commit/{hash}/{treepath}).
+    // -----------------------------------------------------------------------
+    document.querySelectorAll('a[href*="/src/commit/"]').forEach(function(a) {
+      var info = parseCommitHref(a.getAttribute("href"));
+      if (!info || !info.treePath.toLowerCase().endsWith(".ifc")) return;
+      var btn = makeViewerLink(info, "3D");
+      btn.style.marginLeft = "4px";
+      a.insertAdjacentElement("afterend", btn);
+    });
   }
 
   if (document.readyState === "loading") {

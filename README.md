@@ -221,7 +221,10 @@ No build step — loads dependencies from CDN.
 
 - Toolbar with raw ifc:// URL input and structured fields (repo, ref, path,
   selector) — editing any field reloads the model
-- Selector filtering — `IfcWall`, `IfcWall+IfcSlab`, etc.
+- Selector filtering — `IfcWall`, `IfcWall+IfcSlab` (type-name union only in the
+  browser viewer; full IfcOpenShell attribute/property filters are applied
+  server-side by the preview service and are reflected in the URL but not
+  applied visually in the viewer)
 - Clipping planes — `✂ clip` button, double-click on model surface to place;
   drag handles to adjust; planes serialised back into the URL
 - FOV control, camera sync — the URL in the browser bar always reflects the

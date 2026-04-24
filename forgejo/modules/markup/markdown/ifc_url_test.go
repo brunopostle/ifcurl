@@ -86,6 +86,33 @@ func TestIfcURL_InlineAmongText(t *testing.T) {
 	assert.Contains(t, out, "for details.")
 }
 
+func TestIfcURL_BareURLWithAtInQueryValue(t *testing.T) {
+	// @ in a query-string value must not truncate the URL; verify the full
+	// selector value appears in the figcaption (raw URL, HTML-escaped).
+	md := newTestMd(t)
+	out := convert(t, md, "ifc://example.com/org/repo@HEAD?path=m.ifc&selector=abc@def")
+	assert.Contains(t, out, `<figure class="ifcurl-preview">`)
+	assert.Contains(t, out, `selector=abc@def`)
+}
+
+func TestIfcURL_BareURLTerminatesAtClosingParen(t *testing.T) {
+	md := newTestMd(t)
+	out := convert(t, md, "(ifc://example.com/org/repo@HEAD?path=m.ifc) more text")
+	assert.Contains(t, out, `<figure class="ifcurl-preview">`)
+	// The closing ) and trailing text must appear outside the figure
+	assert.Contains(t, out, ") more text")
+	// The URL in the preview must not contain the closing paren
+	assert.NotContains(t, out, "m.ifc)")
+}
+
+func TestIfcURL_BareURLFollowedByPeriod(t *testing.T) {
+	md := newTestMd(t)
+	out := convert(t, md, "See ifc://example.com/org/repo@HEAD?path=m.ifc. Details follow.")
+	assert.Contains(t, out, `<figure class="ifcurl-preview">`)
+	// Period and trailing text must remain in the output
+	assert.Contains(t, out, "Details follow.")
+}
+
 func TestIfcURL_ServiceTokenInPreviewURL(t *testing.T) {
 	setting.IfcURL.PreviewServiceURL = "http://localhost:8000"
 	setting.IfcURL.ServiceToken = "mytoken123"
@@ -95,7 +122,7 @@ func TestIfcURL_ServiceTokenInPreviewURL(t *testing.T) {
 	})
 	md := goldmark.New(goldmark.WithExtensions(markdown.NewIfcURLExtension()))
 	out := convert(t, md, "[label](ifc://example.com/org/repo@HEAD?path=model.ifc)")
-	assert.Contains(t, out, `&token=mytoken123`)
+	assert.Contains(t, out, `&amp;token=mytoken123`)
 }
 
 func TestIfcURL_NoTokenInPreviewURLWhenUnset(t *testing.T) {

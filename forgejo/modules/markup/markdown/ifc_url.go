@@ -51,7 +51,7 @@ func (n *ifcURLNode) Dump(src []byte, level int) {
 type ifcURLTransformer struct{}
 
 // urlTerminators end a bare ifc:// URL in inline text.
-const urlTerminators = " \t\n\r<>\"'"
+const urlTerminators = " \t\n\r<>\"')"
 
 func (t *ifcURLTransformer) Transform(doc *ast.Document, reader text.Reader, _ parser.Context) {
 	if setting.IfcURL.PreviewServiceURL == "" {
