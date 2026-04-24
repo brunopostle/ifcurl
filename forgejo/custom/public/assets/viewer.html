@@ -39,6 +39,15 @@
     #ref-input      { flex: 2; }
     #path-input     { flex: 2; }
     #selector-input { flex: 1; }
+    /* Toolbar buttons */
+    .tb-btn {
+      font-size: 12px; color: #c0c0c8; cursor: pointer; flex-shrink: 0;
+      background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 4px; padding: 3px 8px; white-space: nowrap;
+    }
+    .tb-btn:hover { background: rgba(255,255,255,0.14); }
+    .tb-btn.active { color: #a8c8ff; background: rgba(80,120,255,0.2);
+                     border-color: rgba(80,120,255,0.5); }
     /* Status */
     #status {
       position: fixed; bottom: 12px; left: 50%;
@@ -77,6 +86,8 @@
       <input id="url-input" class="ti" type="text"
              placeholder="Paste ifc:// URL and press Enter, or fill fields below"
              spellcheck="false">
+      <button id="clip-btn" class="tb-btn" title="Double-click model surface to add clipping plane">✂ clip</button>
+      <button id="clip-clear-btn" class="tb-btn" title="Remove all clipping planes" style="display:none">⊗ clips</button>
       <div id="fov-wrap">
         FOV <input id="fov-input" class="ti" type="number" min="10" max="120" step="1"
                    title="Field of view (degrees)">°
@@ -132,6 +143,7 @@
 
     let cameraControls = null;
     let threeCamera    = null;
+    let activeClipper  = null;
 
     // -----------------------------------------------------------------------
     // Parse an ifc:// URL into its components.
@@ -304,6 +316,17 @@
         qs.delete("fov");
         fovInput.value = "";
       }
+      // Replace original clip= params with current interactive planes.
+      qs.delete("clip");
+      if (activeClipper) {
+        for (const [, plane] of activeClipper.list) {
+          const n3 = plane.three.normal;
+          const p3 = n3.clone().multiplyScalar(-plane.three.constant);
+          const ni = toIfc(n3), pi = toIfc(p3);
+          qs.append("clip", [f(pi.x),f(pi.y),f(pi.z),f(ni.x),f(ni.y),f(ni.z)].join(","));
+        }
+      }
+
       const newIfcUrl = base + "?" + qs.toString().replace(/%2C/g, ",");
 
       urlInput.value = newIfcUrl;
@@ -314,16 +337,53 @@
     }
 
     // -----------------------------------------------------------------------
-    // Apply clip= planes from the ifc:// URL to the Three.js renderer.
-    // Each clip= is 6 floats: point x,y,z + normal x,y,z in IFC world coords.
+    // Set up OBC.Clipper for interactive clipping planes.
+    // Seeds initial planes from the URL, wires toolbar buttons, and syncs
+    // plane state back to the URL on create/delete/drag.
     // -----------------------------------------------------------------------
-    function applyClipPlanes(world, clips) {
-      const planes = clips.map(([px, py, pz, nx, ny, nz]) => {
-        const p3 = toThree(px, py, pz);
-        const n3 = toThree(nx, ny, nz).normalize();
-        return new THREE.Plane(n3, -n3.dot(p3));
+    function setupClipper(components, world, clips) {
+      const clipper = components.get(OBC.Clipper);
+      clipper.setup();
+      activeClipper = clipper;
+
+      const clipBtn      = document.getElementById("clip-btn");
+      const clipClearBtn = document.getElementById("clip-clear-btn");
+      const container    = document.getElementById("viewer");
+
+      function updateClearBtn() {
+        clipClearBtn.style.display = clipper.list.size > 0 ? "" : "none";
+      }
+
+      // Seed planes from URL as interactive planes.
+      for (const [px, py, pz, nx, ny, nz] of clips) {
+        clipper.createFromNormalAndCoplanarPoint(
+          world, toThree(nx, ny, nz).normalize(), toThree(px, py, pz)
+        );
+      }
+      updateClearBtn();
+
+      // Double-click on model surface adds a plane when clip mode is active.
+      let clipMode = false;
+      clipBtn.addEventListener("click", () => {
+        clipMode = !clipMode;
+        clipBtn.classList.toggle("active", clipMode);
+        container.style.cursor = clipMode ? "crosshair" : "";
       });
-      world.renderer.three.clippingPlanes = planes;
+      container.addEventListener("dblclick", async () => {
+        if (!clipMode) return;
+        await clipper.create(world);
+        syncCameraUrl(threeCamera);
+        updateClearBtn();
+      });
+
+      clipClearBtn.addEventListener("click", () => {
+        clipper.deleteAll();
+        syncCameraUrl(threeCamera);
+        updateClearBtn();
+      });
+
+      // Sync URL whenever a plane is dragged.
+      clipper.onAfterDrag.add(() => syncCameraUrl(threeCamera));
     }
 
     // -----------------------------------------------------------------------
@@ -497,7 +557,7 @@
         const clips = qsPost.getAll("clip")
           .map(s => s.split(",").map(Number))
           .filter(v => v.length === 6 && !v.some(isNaN));
-        if (clips.length) applyClipPlanes(world, clips);
+        setupClipper(components, world, clips);
 
         const selectorStr = qsPost.get("selector") ?? "";
         if (selectorStr) {
