@@ -47,12 +47,14 @@ RestartSec=5
 # AF_UNIX is excluded so a compromised subprocess cannot connect to the
 # Forgejo Unix socket if one is present.
 # ---------------------------------------------------------------------------
+Environment=XDG_CACHE_HOME=/var/cache
+CacheDirectory=ifcurl
 NoNewPrivileges=yes
 RestrictSUIDSGID=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/cache/ifcurl /root/.cache/ifcurl
+ReadWritePaths=/var/cache/ifcurl
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
