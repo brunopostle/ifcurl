@@ -1,3 +1,6 @@
+// Copyright 2026 The Forgejo Authors. All rights reserved.
+// SPDX-License-Identifier: MIT
+//
 // Pure ifc:// URL logic shared between viewer.html and tests.
 
 export function parseIfcUrl(raw) {
