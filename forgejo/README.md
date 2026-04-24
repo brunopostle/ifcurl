@@ -27,7 +27,8 @@ forgejo/
     footer.tmpl                         ← "View in 3D" button injection
   server-config/
     ifcurl-preview.service              ← systemd unit for the preview service
-    gitconfig-ifcmerge                  ← git merge driver config for .ifc files
+    gitconfig-ifcmerge                  ← git merge driver registration for /etc/gitconfig
+    gitattributes                       ← system-wide gitattributes for bare repos
 ```
 
 ---
@@ -188,6 +189,18 @@ no preview image.
 Configuring `ifcmerge` as the git merge driver for `.ifc` files lets Forgejo
 automatically merge IFC pull requests instead of marking them as conflicted.
 
+### How Forgejo checks mergeability
+
+Forgejo (with git ≥ 2.38) uses `git merge-tree --write-tree` to perform a
+trial merge in the bare repository.  This command **does** invoke configured
+merge drivers — confirmed by testing.  With ifcmerge set up correctly,
+the "can be automatically merged" indicator on a PR reflects ifcmerge's
+actual result, not a naive text-conflict check.
+
+**Important:** bare repositories do not read committed `.gitattributes` files
+from the tree.  The merge driver must be declared via a system-wide
+`core.attributesFile` setting in `/etc/gitconfig`.
+
 ### Prerequisites
 
 `ifcmerge` is a single Perl script from
@@ -206,37 +219,23 @@ Verify it is on `PATH` for the `forgejo` system user:
 sudo -u forgejo which ifcmerge
 ```
 
-### Register the merge drivers
-
-Append `server-config/gitconfig-ifcmerge` to the server's global git config:
+### Deploy the config files
 
 ```bash
-sudo git config --system --add include.path /path/to/forgejo/server-config/gitconfig-ifcmerge
+# System-wide gitattributes (the critical piece for bare repos)
+sudo cp forgejo/server-config/gitattributes /etc/gitattributes
+
+# Append merge driver registration + core.attributesFile to /etc/gitconfig
+sudo git config --system include.path /path/to/ifcurl/forgejo/server-config/gitconfig-ifcmerge
 ```
 
-Or copy the two `[merge "…"]` blocks directly into `/etc/gitconfig`.
-
-### Set the per-repository gitattributes
-
-Add a `.gitattributes` file to each IFC repository:
-
-```
-*.ifc merge=ifcmerge
-```
-
-Or set a server-wide default by adding to
-`/usr/share/git-core/templates/info/attributes` (applied to all newly
-initialised repos):
-
-```
-*.ifc merge=ifcmerge
-```
+Or apply the blocks from `server-config/gitconfig-ifcmerge` directly into
+`/etc/gitconfig` by hand.
 
 ### Merge direction
 
 The merge driver is asymmetrical: `ifcmerge` rewrites STEP IDs from `%B`
-(theirs) to match `%A` (ours), so `%A`'s ID space is preserved in the
-merged file.
+(theirs) to match `%A` (ours), so `%A`'s ID space is preserved.
 
 For Forgejo, use the **"Merge commit"** strategy (not rebase or squash).
 With a merge commit, `%A` is always the base branch (e.g. `main`) and
@@ -244,8 +243,22 @@ With a merge commit, `%A` is always the base branch (e.g. `main`) and
 existing cross-references remain valid.
 
 A second driver `ifcmerge_ours` is defined in the config file for cases
-where the base branch arrives as `%B`; see the comments in
+where the base branch arrives as `%B`; see comments in
 `server-config/gitconfig-ifcmerge` for details.
+
+### Client-side `.gitattributes`
+
+For client-side merges (`git merge` on a developer's machine) committed
+`.gitattributes` files in the repository work fine.  It is still worth
+adding one:
+
+```
+*.ifc merge=ifcmerge
+```
+
+This ensures developers with ifcmerge installed get automatic IFC merges
+locally, and tools that read gitattributes (e.g. diff viewers) can
+identify `.ifc` files correctly.
 
 ---
 

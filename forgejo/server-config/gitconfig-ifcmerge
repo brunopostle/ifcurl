@@ -1,14 +1,28 @@
-# Add to /etc/gitconfig (or ~forgejo/.gitconfig) on the Forgejo server.
+# Add to /etc/gitconfig on the Forgejo server.
 #
-# Two drivers are registered because the merge is asymmetrical — ifcmerge
-# rewrites STEP IDs from %B to match %A's ID space.  The base-branch must
-# always be %A so its IDs are preserved.
+# IMPORTANT: also set core.attributesFile so that bare repositories pick up
+# the merge driver.  Committed per-repo .gitattributes files are NOT read by
+# git merge-tree --write-tree in bare-repo context.
 #
-#   ifcmerge        — use when the base branch is %A (standard 'merge commit')
-#   ifcmerge_ours   — use when the base branch is %B (rebase direction);
-#                     swaps the roles so base-branch IDs are still preserved.
-#                     Requires ifcmerge to support --prefer-other; if not,
-#                     use 'merge commit' strategy exclusively and omit this.
+#   [core]
+#       attributesFile = /etc/gitattributes
+#
+# and put "*.ifc merge=ifcmerge" in /etc/gitattributes (see gitattributes
+# in this directory).
+#
+# How the merge drivers work
+# --------------------------
+# ifcmerge rewrites STEP IDs from %B to match %A's ID space, so %A's IDs
+# are preserved in the merged result.  Use the "Merge commit" strategy in
+# Forgejo so that %A is always the base branch (e.g. main).
+#
+# Two variants are registered for symmetry:
+#   ifcmerge        — base branch is %A (standard merge-commit direction)
+#   ifcmerge_ours   — base branch is %B (rebase direction); swaps %A/%B so
+#                     base-branch IDs are still preserved
+
+[core]
+    attributesFile = /etc/gitattributes
 
 [merge "ifcmerge"]
     name = IFC merge driver (base is ours)

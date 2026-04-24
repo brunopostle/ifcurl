@@ -1,0 +1,12 @@
+# System-wide gitattributes for the Forgejo server.
+# Reference this file from /etc/gitconfig:
+#
+#   [core]
+#       attributesFile = /etc/gitattributes
+#
+# This causes git merge-tree --write-tree (used by Forgejo's mergeability
+# check) to invoke ifcmerge for .ifc files in bare repositories.
+# Committed per-repo .gitattributes files are NOT read by git in bare-repo
+# context and are therefore insufficient for the server-side conflict check.
+
+*.ifc merge=ifcmerge
