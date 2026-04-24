@@ -446,6 +446,7 @@ def bcf_export(request: BcfRequest) -> Response:
         visibility=ifc_url.visibility,
         title=request.title,
         comment=request.comment,
+        description=request.url,
     )
     return Response(
         content=bcf_bytes,

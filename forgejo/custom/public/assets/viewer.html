@@ -436,8 +436,19 @@
       const target = pos.clone().add(dir);
       await controls.setLookAt(pos.x, pos.y, pos.z, target.x, target.y, target.z, false);
 
-      const fovStr = qs.get("fov");
-      if (fovStr && camera.isPerspectiveCamera) {
+      const fovStr   = qs.get("fov");
+      const scaleStr = qs.get("scale");
+      if (scaleStr) {
+        // Switch to orthographic projection and apply the view-to-world scale.
+        await controls.setOrthoCamera();
+        const s = parseFloat(scaleStr);
+        if (!isNaN(s)) {
+          camera.top    =  s / 2;
+          camera.bottom = -s / 2;
+          camera.updateProjectionMatrix();
+        }
+        fovInput.value = "";
+      } else if (fovStr && camera.isPerspectiveCamera) {
         camera.fov = Math.max(10, Math.min(120, parseFloat(fovStr)));
         camera.updateProjectionMatrix();
         fovInput.value = Math.round(camera.fov);
@@ -456,14 +467,15 @@
       const qIdx = src.indexOf("?");
       const qs   = new URLSearchParams(qIdx < 0 ? "" : src.slice(qIdx + 1));
 
-      const camV  = (qs.get("camera") ?? "").split(",").map(Number);
-      const cam   = camV.length === 9 && !camV.some(isNaN) ? camV : null;
-      const fov   = cam ? (parseFloat(qs.get("fov")) || null) : null;
-      const scale = cam ? (parseFloat(qs.get("scale")) || null) : null;
-      const clips = qs.getAll("clip")
+      const camV      = (qs.get("camera") ?? "").split(",").map(Number);
+      const cam       = camV.length === 9 && !camV.some(isNaN) ? camV : null;
+      const fov       = cam ? (parseFloat(qs.get("fov")) || null) : null;
+      const scale     = cam ? (parseFloat(qs.get("scale")) || null) : null;
+      const clips     = qs.getAll("clip")
         .map(s => s.split(",").map(Number))
         .filter(v => v.length === 6 && !v.some(isNaN));
-      const selector = qs.get("selector") || "";
+      const selector   = qs.get("selector") || "";
+      const visibility = qs.get("visibility") || "highlight";
 
       const topicGuid = crypto.randomUUID();
       const vpGuid    = cam ? crypto.randomUUID() : null;
@@ -506,9 +518,12 @@
         `<ClippingPlane>${xyz("Location",cx,cy,cz)}${xyz("Direction",nx,ny,nz)}</ClippingPlane>`
       ).join("\n    ")}
   </ClippingPlanes>` : "";
+        // Reflect visibility mode: isolate → hide everything by default,
+        // ghost/highlight → show everything by default.
+        const defaultVis = visibility === "isolate" ? "false" : "true";
         viewpointXml = `<?xml version="1.0" encoding="utf-8"?>
 <VisualizationInfo Guid="${vpGuid}">
-  <Components><Visibility DefaultVisibility="true"/></Components>
+  <Components><Visibility DefaultVisibility="${defaultVis}"/></Components>
   ${camXml}
   ${clipsXml}
 </VisualizationInfo>`;

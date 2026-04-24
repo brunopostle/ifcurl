@@ -128,6 +128,18 @@ class TestBuildBcf:
         assert 'DefaultVisibility="false"' in content
         assert "Exceptions" in content
 
+    def test_description_in_markup(self):
+        data = build_bcf(description="ifc://example.com/org/repo@heads/main?path=m.ifc")
+        markup = next(n for n in _zip_names(data) if n.endswith("markup.bcf"))
+        content = _zip_read(data, markup)
+        assert "<Description>ifc://example.com" in content
+
+    def test_no_description_element_when_empty(self):
+        data = build_bcf()
+        markup = next(n for n in _zip_names(data) if n.endswith("markup.bcf"))
+        content = _zip_read(data, markup)
+        assert "<Description>" not in content
+
 
 # ---------------------------------------------------------------------------
 # /bcf service endpoint tests
@@ -163,6 +175,13 @@ class TestBcfEndpoint:
         content = _zip_read(r.content, markup)
         assert "My issue" in content
         assert "Fix this" in content
+
+    def test_source_url_in_description(self):
+        r = client.post("/bcf", json={"url": CAMERA_URL})
+        markup = next(n for n in _zip_names(r.content) if n.endswith("markup.bcf"))
+        content = _zip_read(r.content, markup)
+        # & is XML-escaped to &amp; in the description element
+        assert CAMERA_URL.replace("&", "&amp;") in content
 
     def test_clip_plane_in_viewpoint(self):
         r = client.post("/bcf", json={"url": CLIP_URL})

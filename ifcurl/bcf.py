@@ -106,11 +106,14 @@ def _markup_xml(
     comment: str,
     author: str,
     now: str,
+    description: str = "",
 ) -> bytes:
     root = ET.Element("Markup")
     topic = ET.SubElement(root, "Topic",
                           Guid=topic_guid, TopicType="Coordination", TopicStatus="Open")
     ET.SubElement(topic, "Title").text = title or "IFC View"
+    if description:
+        ET.SubElement(topic, "Description").text = description
     ET.SubElement(topic, "CreationDate").text = now
     ET.SubElement(topic, "CreationAuthor").text = author
     if vp_guid:
@@ -137,6 +140,7 @@ def build_bcf(
     visibility: str = "highlight",
     title: str = "IFC View",
     comment: str = "",
+    description: str = "",
     author: str = "anonymous",
 ) -> bytes:
     """Build a BCF 2.1 zip archive and return the raw bytes.
@@ -149,6 +153,7 @@ def build_bcf(
     :param visibility: ``'highlight'``, ``'ghost'``, or ``'isolate'``.
     :param title: BCF topic title.
     :param comment: Optional comment text added to the topic.
+    :param description: Optional long description for the topic (e.g. the source ifc:// URL).
     :param author: Author string recorded in the BCF markup.
     :returns: Bytes of a valid BCF 2.1 zip archive.
     """
@@ -161,7 +166,7 @@ def build_bcf(
         zf.writestr("bcf.version", _VERSION_XML)
         zf.writestr(
             f"{topic_guid}/markup.bcf",
-            _markup_xml(topic_guid, vp_guid, title, comment, author, now),
+            _markup_xml(topic_guid, vp_guid, title, comment, author, now, description),
         )
         if vp_guid is not None:
             zf.writestr(

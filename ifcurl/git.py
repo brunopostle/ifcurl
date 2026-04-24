@@ -266,6 +266,7 @@ def _open_remote(remote_url: str, is_mutable: bool, token: str | None = None) ->
                     repo.git.fetch("origin")
             except git.exc.GitCommandError:
                 pass  # offline — use cached data
+            _evict_if_needed()
 
     _touch_cache(cache_dir)
     return repo

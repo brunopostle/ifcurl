@@ -69,7 +69,7 @@ export function toRawUrl(raw) {
   if (host === "github.com" || host.endsWith(".github.com")) {
     return `https://raw.githubusercontent.com/${repoPath}/${plainRef}/${filePath}`;
   }
-  if (host === "gitlab.com" || host.includes("gitlab")) {
+  if (host === "gitlab.com" || host.startsWith("gitlab.")) {
     const proto = host.startsWith("localhost") ? "http" : "https";
     return `${proto}://${host}/${repoPath}/-/raw/${plainRef}/${filePath}`;
   }

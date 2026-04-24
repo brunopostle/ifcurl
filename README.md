@@ -137,8 +137,8 @@ non-private remote hosts.
 | Endpoint | Description |
 |---|---|
 | `POST /preview` | Render an ifc:// URL to PNG |
-| `GET /preview?url=ifc://…` | Same, via query string |
-| `GET /viewer?url=ifc://…` | Redirect to the Forgejo browser viewer |
+| `GET /preview?url=ifc://…` | Same, via query string (used by Forgejo `<img>` tags) |
+| `POST /bcf` | Generate a BCF 2.1 zip from an ifc:// URL viewpoint |
 
 ### Caching
 

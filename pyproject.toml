@@ -21,7 +21,7 @@ dependencies = ["ifcopenshell", "gitpython", "platformdirs"]
 
 [project.optional-dependencies]
 render = ["pyvista", "numpy"]
-service = ["pyvista", "numpy", "fastapi", "uvicorn[standard]"]
+service = ["pyvista", "numpy", "fastapi", "uvicorn[standard]", "bcf"]
 
 [project.scripts]
 ifcurl = "ifcurl.__main__:main"
