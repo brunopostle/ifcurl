@@ -44,18 +44,83 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-import ifcopenshell
-import ifcopenshell.util.selector
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from platformdirs import user_cache_dir
 from pydantic import BaseModel
 
-from ifcurl import render as render_mod
 from ifcurl.auth import get_token_for_host
 from ifcurl.bcf import build_bcf
 from ifcurl.git import fetch_ifc
+from ifcurl.sandbox import SandboxCrashError, SandboxTimeoutError, run_sandboxed
 from ifcurl.url import IfcUrl
+
+# ---------------------------------------------------------------------------
+# Subprocess pipeline functions (run inside run_sandboxed — no service imports)
+# ---------------------------------------------------------------------------
+
+def _sandboxed_pipeline(
+    ifc_bytes: bytes,
+    selector: str | None,
+    element_guids: frozenset[str] | None,
+    camera: tuple | None,
+    fov: float | None,
+    scale: float | None,
+    clips: list,
+    visibility: str,
+) -> tuple[frozenset[str] | None, bytes]:
+    """Parse, optionally resolve selection, and render in a child process.
+
+    Returns ``(new_guids, png_bytes)`` where *new_guids* is populated only when
+    *selector* was given (T3 cache miss path) so the caller can update the cache.
+    """
+    import ifcopenshell
+    import ifcopenshell.util.selector
+    from ifcurl import render as render_mod
+
+    model = ifcopenshell.file.from_string(ifc_bytes.decode())
+
+    # T3 cache miss: run selector and return GUIDs for caching
+    new_guids: frozenset[str] | None = None
+    element_ids: list[int] | None = None
+
+    if selector is not None:
+        matched = list(ifcopenshell.util.selector.filter_elements(model, selector))
+        new_guids = frozenset(
+            e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId
+        )
+    elif element_guids is not None:
+        # T3 cache hit: convert cached GUIDs to step IDs for this model instance
+        ids = []
+        for guid in element_guids:
+            try:
+                ids.append(model.by_guid(guid).id())
+            except Exception:
+                pass
+        element_ids = ids if ids else None
+
+    png = render_mod.render(
+        model,
+        selector=selector,
+        element_ids=element_ids,
+        camera=camera,
+        fov=fov,
+        scale=scale,
+        clips=clips or None,
+        visibility=visibility,
+    )
+    return new_guids, png
+
+
+def _sandboxed_select(ifc_bytes: bytes, selector: str) -> list[str]:
+    """Parse and run selector in a child process. Returns list of GlobalIds."""
+    import ifcopenshell
+    import ifcopenshell.util.selector
+
+    model = ifcopenshell.file.from_string(ifc_bytes.decode())
+    matched = list(ifcopenshell.util.selector.filter_elements(model, selector))
+    return [e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId]
+
 
 app = FastAPI(
     title="ifcurl preview service",
@@ -155,18 +220,6 @@ def _t3_put(hexsha: str, path: str, selector: str, guids: frozenset[str]) -> Non
             _t3_cache.popitem(last=False)
 
 
-def _guids_to_step_ids(model: ifcopenshell.file, guids: frozenset[str]) -> list[int]:
-    """Resolve a set of GlobalIds to step IDs in *model*."""
-    ids = []
-    for guid in guids:
-        try:
-            entity = model.by_guid(guid)
-            ids.append(entity.id())
-        except Exception:
-            pass  # entity not present in this model version
-    return ids
-
-
 # ---------------------------------------------------------------------------
 # Tier 4: sha256(url) → PNG (filesystem, immutable refs only, no expiry)
 # ---------------------------------------------------------------------------
@@ -217,17 +270,6 @@ def _t4m_get(url: str) -> tuple[bytes, int] | None:
 
 def _t4m_put(url: str, png: bytes) -> None:
     _t4m_path(url).write_bytes(png)
-
-
-# ---------------------------------------------------------------------------
-# Helper: load model from bytes via a temp file
-# ---------------------------------------------------------------------------
-
-def _load_model(ifc_bytes: bytes) -> ifcopenshell.file:
-    try:
-        return ifcopenshell.file.from_string(ifc_bytes.decode())
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Could not parse IFC file: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -327,50 +369,44 @@ def preview(request: PreviewRequest) -> Response:
     else:
         _t2_put(hexsha, ifc_url.path, ifc_bytes)
 
-    # --- Load model ---
-    model = _load_model(ifc_bytes)
-
-    # --- Tier 3: resolve selector via GUID cache ---
-    element_ids: list[int] | None = None
-    selector_for_render: str | None = ifc_url.selector
+    # --- Tier 3: check GUID cache ---
+    # T3 hit  → pass element_guids (child converts to step IDs), skip selector
+    # T3 miss → pass selector string (child runs filter_elements and returns GUIDs)
+    cached_guids: frozenset[str] | None = None
+    selector_for_sandbox: str | None = ifc_url.selector
+    element_guids: frozenset[str] | None = None
 
     if ifc_url.selector:
         cached_guids = _t3_get(hexsha, ifc_url.path, ifc_url.selector)
         if cached_guids is not None:
-            # Convert cached GUIDs to step IDs in this model instance.
-            # Pass element_ids only (no selector) — filter_elements is skipped.
-            # Note: for 'isolate' mode this iterates all geometry rather than
-            # restricting the iterator; correctness is preserved, not optimal.
-            element_ids = _guids_to_step_ids(model, cached_guids)
-            selector_for_render = None
-        else:
-            # Run selector, cache GUIDs for future requests
-            try:
-                matched = list(ifcopenshell.util.selector.filter_elements(model, ifc_url.selector))
-            except Exception as exc:
-                raise HTTPException(status_code=422, detail=f"Invalid selector: {exc}") from exc
-            guids = frozenset(
-                e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId
-            )
-            _t3_put(hexsha, ifc_url.path, ifc_url.selector, guids)
-            # Fall through: render() will re-run filter_elements via selector_for_render
+            element_guids = cached_guids
+            selector_for_sandbox = None
 
-    # --- Render ---
+    # --- Sandboxed parse + select + render ---
     try:
-        png_bytes = render_mod.render(
-            model,
-            selector=selector_for_render,
-            element_ids=element_ids,
-            camera=ifc_url.camera,
-            fov=ifc_url.fov,
-            scale=ifc_url.scale,
-            clips=ifc_url.clips or None,
-            visibility=ifc_url.visibility,
+        new_guids, png_bytes = run_sandboxed(
+            _sandboxed_pipeline,
+            ifc_bytes,
+            selector_for_sandbox,
+            element_guids,
+            ifc_url.camera,
+            ifc_url.fov,
+            ifc_url.scale,
+            ifc_url.clips or [],
+            ifc_url.visibility,
         )
+    except SandboxCrashError as exc:
+        raise HTTPException(status_code=422, detail=f"IFC parse/render crashed: {exc}") from exc
+    except SandboxTimeoutError as exc:
+        raise HTTPException(status_code=503, detail=f"Render timed out: {exc}") from exc
     except ImportError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # --- Tier 3: populate GUID cache from selector run ---
+    if new_guids is not None and ifc_url.selector:
+        _t3_put(hexsha, ifc_url.path, ifc_url.selector, new_guids)
 
     # --- Tier 4 / 4m: store PNG and return with appropriate cache headers ---
     if ifc_url.is_mutable_ref():
@@ -423,12 +459,14 @@ def bcf_export(request: BcfRequest) -> Response:
         if cached is None:
             _t2_put(hexsha, ifc_url.path, ifc_bytes)
 
-        model = _load_model(ifc_bytes)
         try:
-            matched = list(ifcopenshell.util.selector.filter_elements(model, ifc_url.selector))
+            guids = run_sandboxed(_sandboxed_select, ifc_bytes, ifc_url.selector)
+        except SandboxCrashError as exc:
+            raise HTTPException(status_code=422, detail=f"IFC parse/select crashed: {exc}") from exc
+        except SandboxTimeoutError as exc:
+            raise HTTPException(status_code=503, detail=f"Select timed out: {exc}") from exc
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"Invalid selector: {exc}") from exc
-        guids = [e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId]
 
     bcf_bytes = build_bcf(
         camera=ifc_url.camera,

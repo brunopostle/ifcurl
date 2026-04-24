@@ -36,6 +36,20 @@ def clear_caches(tmp_path, monkeypatch):
     configure_allowed_hosts(None)
 
 
+@pytest.fixture(autouse=True)
+def sync_sandbox(monkeypatch):
+    """Run run_sandboxed synchronously in tests (no subprocess spawning).
+
+    The sandbox pipeline functions are called directly in the test process so
+    that unittest.mock patches on ifcurl.render.render and
+    ifcopenshell.util.selector.filter_elements are visible to them.
+    """
+    monkeypatch.setattr(
+        "ifcurl.service.run_sandboxed",
+        lambda fn, *a, **kw: fn(*a),
+    )
+
+
 @pytest.fixture()
 def tmp_t4_cache(tmp_path):
     """Return the temp cache directory (already redirected by clear_caches)."""
@@ -79,7 +93,7 @@ class TestPreviewRender:
     def test_returns_png_content_type(self, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             r = client.post("/preview", json={"url": MUTABLE_URL})
         assert r.status_code == 200
         assert r.headers["content-type"] == "image/png"
@@ -93,7 +107,7 @@ class TestPreviewRender:
     def test_render_error_returns_422(self, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", side_effect=ValueError("No geometry")):
+             patch("ifcurl.render.render", side_effect=ValueError("No geometry")):
             r = client.post("/preview", json={"url": MUTABLE_URL})
         assert r.status_code == 422
 
@@ -106,8 +120,8 @@ class TestPreviewRender:
 class TestTier2Cache:
     def test_bytes_cached_after_first_request(self, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()
-        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)) as mock_fetch, \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             client.post("/preview", json={"url": MUTABLE_URL})
         assert (FAKE_HEXSHA, "model.ifc") in _t2_cache
 
@@ -124,7 +138,7 @@ class TestTier2Cache:
         # verify that tier-2 serves ifc_bytes from cache on the second call.
         monkeypatch.setattr("ifcurl.service._T4M_TTL", 0)
         with patch("ifcurl.service.fetch_ifc", counting_fetch), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             client.post("/preview", json={"url": MUTABLE_URL})
             client.post("/preview", json={"url": MUTABLE_URL})
         # fetch_ifc still called both times (for the commit hexsha),
@@ -142,14 +156,14 @@ class TestTier3Cache:
     def test_guids_cached_after_selector_request(self, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             client.post("/preview", json={"url": SELECTOR_URL})
         assert (FAKE_HEXSHA, "model.ifc", "IfcWall") in _t3_cache
 
     def test_cached_guids_are_frozenset(self, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             client.post("/preview", json={"url": SELECTOR_URL})
         cached = _t3_cache[(FAKE_HEXSHA, "model.ifc", "IfcWall")]
         assert isinstance(cached, frozenset)
@@ -165,7 +179,7 @@ class TestTier3Cache:
             return real_filter(model, selector)
 
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG), \
+             patch("ifcurl.render.render", return_value=FAKE_PNG), \
              patch("ifcopenshell.util.selector.filter_elements", counting_filter):
             client.post("/preview", json={"url": SELECTOR_URL})
             client.post("/preview", json={"url": SELECTOR_URL})
@@ -189,7 +203,7 @@ class TestTier4Cache:
             return FAKE_PNG
 
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", counting_render):
+             patch("ifcurl.render.render", counting_render):
             r1 = client.post("/preview", json={"url": IMMUTABLE_URL})
             r2 = client.post("/preview", json={"url": IMMUTABLE_URL})
 
@@ -207,7 +221,7 @@ class TestTier4Cache:
             return FAKE_PNG
 
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", counting_render):
+             patch("ifcurl.render.render", counting_render):
             client.post("/preview", json={"url": MUTABLE_URL})
             client.post("/preview", json={"url": MUTABLE_URL})
 
@@ -224,7 +238,7 @@ class TestTier4Cache:
 
         monkeypatch.setattr("ifcurl.service._T4M_TTL", 0)
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", counting_render):
+             patch("ifcurl.render.render", counting_render):
             client.post("/preview", json={"url": MUTABLE_URL})
             client.post("/preview", json={"url": MUTABLE_URL})
 
@@ -233,7 +247,7 @@ class TestTier4Cache:
     def test_tier4_cache_file_exists_on_disk(self, tmp_t4_cache, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             client.post("/preview", json={"url": IMMUTABLE_URL})
         png_files = list(tmp_t4_cache.rglob("*.png"))
         assert len(png_files) == 1
@@ -255,7 +269,7 @@ class TestAuthentication:
             return FAKE_HEXSHA, ifc_bytes
 
         with patch("ifcurl.service.fetch_ifc", capturing_fetch), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             client.post("/preview", json={"url": MUTABLE_URL, "token": "mytoken123"})
 
         assert received_token == ["mytoken123"]
@@ -270,7 +284,7 @@ class TestAuthentication:
 
         monkeypatch.setattr("ifcurl.service.get_token_for_host", lambda host: "config_token")
         with patch("ifcurl.service.fetch_ifc", capturing_fetch), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             client.post("/preview", json={"url": MUTABLE_URL})
 
         assert received_token == ["config_token"]
@@ -285,7 +299,7 @@ class TestAuthentication:
 
         monkeypatch.setattr("ifcurl.service.get_token_for_host", lambda host: "config_token")
         with patch("ifcurl.service.fetch_ifc", capturing_fetch), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             client.post("/preview", json={"url": MUTABLE_URL, "token": "request_token"})
 
         assert received_token == ["request_token"]
@@ -300,7 +314,7 @@ class TestGetEndpoint:
     def test_get_returns_png(self, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             r = client.get("/preview", params={"url": MUTABLE_URL})
         assert r.status_code == 200
         assert r.headers["content-type"] == "image/png"
@@ -323,7 +337,7 @@ class TestGetEndpoint:
             return FAKE_HEXSHA, ifc_bytes
 
         with patch("ifcurl.service.fetch_ifc", mock_fetch), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             r = client.get("/preview", params={"url": MUTABLE_URL, "token": "mytoken"})
         assert r.status_code == 200
         assert received["token"] == "mytoken"
@@ -379,14 +393,14 @@ class TestSSRF:
         configure_allowed_hosts({"example.com"})
         ifc_bytes = model_with_geometry.to_string().encode()
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             r = client.post("/preview", json={"url": MUTABLE_URL})
         assert r.status_code == 200
 
     def test_no_allowlist_permits_public_host(self, model_with_geometry):
         ifc_bytes = model_with_geometry.to_string().encode()
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             r = client.post("/preview", json={"url": MUTABLE_URL})
         assert r.status_code == 200
 
@@ -406,7 +420,7 @@ class TestSSRF:
         configure_allowed_hosts({"localhost:3000"})
         ifc_bytes = model_with_geometry.to_string().encode()
         with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)), \
-             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+             patch("ifcurl.render.render", return_value=FAKE_PNG):
             r = client.post("/preview", json={
                 "url": "ifc://localhost:3000/org/repo@heads/main?path=model.ifc"
             })
