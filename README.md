@@ -134,7 +134,6 @@ ifcurl serve --host 0.0.0.0 --port 9000
 | `POST /preview` | Render an ifc:// URL to PNG |
 | `GET /preview?url=ifc://…` | Same, via query string |
 | `GET /viewer?url=ifc://…` | Redirect to the Forgejo browser viewer |
-| `GET /proxy?url=<raw-url>` | Proxy an IFC file (CORS workaround) |
 
 ### Caching
 
