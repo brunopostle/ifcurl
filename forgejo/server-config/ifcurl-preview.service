@@ -19,6 +19,50 @@ RestartSec=5
 #   IFCURL_CACHE_MAX_GB=10   max bare-repo disk cache
 #   IFCURL_T2_MAX=8          max IFC blobs in memory
 #   IFCURL_T3_MAX=64         max selector results in memory
+#   IFCURL_SANDBOX_TIMEOUT=120   max seconds per render subprocess
+#   IFCURL_SANDBOX_MEMORY_MB=0   address-space cap per subprocess (0=unlimited)
+
+# ---------------------------------------------------------------------------
+# Sandbox hardening
+#
+# These directives apply to the service process and all child processes
+# (including the render subprocesses spawned by sandbox.py).  Together they
+# limit the blast radius if a crafted IFC file achieves code execution inside
+# a render subprocess.
+#
+# ProtectSystem=strict + ReadWritePaths: the service can only write to its own
+# cache directory; the Forgejo data tree (/var/lib/forgejo, /etc/forgejo) is
+# read-only from this unit's perspective.
+#
+# NoNewPrivileges + RestrictSUIDSGID: prevent privilege escalation via
+# setuid binaries or capabilities.
+#
+# SystemCallFilter: allow the syscalls a Python/C-extension process needs
+# (@system-service covers the common POSIX set; @process covers fork/clone
+# which ifcopenshell's geometry iterator requires).  execve/execveat are NOT
+# in either set, so an attacker with code execution cannot exec a shell.
+# The filter applies to child processes too (inherited across fork).
+#
+# RestrictAddressFamilies: the service only needs TCP/UDP to reach git hosts.
+# AF_UNIX is excluded so a compromised subprocess cannot connect to the
+# Forgejo Unix socket if one is present.
+# ---------------------------------------------------------------------------
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/cache/ifcurl /root/.cache/ifcurl
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @process @files @io-event @network-io
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target
