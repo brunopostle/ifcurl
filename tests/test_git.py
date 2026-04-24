@@ -97,3 +97,70 @@ class TestInvalidRepo:
         url = IfcUrl.parse(f"ifc://{tmp_path}@HEAD?path=model.ifc")
         with pytest.raises(ValueError):
             fetch_ifc(url)
+
+
+# ---------------------------------------------------------------------------
+# Cache management helpers
+# ---------------------------------------------------------------------------
+
+
+from ifcurl.git import _dir_size, _evict_if_needed, _repo_cache_entries, _touch_cache
+
+
+def _make_fake_repo_cache(base: "Path", url: str, size_bytes: int = 1024) -> "Path":
+    """Create a fake cached-repo directory structure under *base*."""
+    import hashlib
+    key = hashlib.sha256(url.encode()).hexdigest()[:24]
+    entry = base / key
+    git_dir = entry / "repo.git"
+    git_dir.mkdir(parents=True)
+    (git_dir / "dummy").write_bytes(b"\x00" * size_bytes)
+    (entry / "remote_url").write_text(url)
+    return entry
+
+
+class TestCacheHelpers:
+    def test_dir_size_counts_nested_files(self, tmp_path):
+        (tmp_path / "a").write_bytes(b"x" * 100)
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "b").write_bytes(b"y" * 200)
+        assert _dir_size(tmp_path) == 300
+
+    def test_touch_cache_updates_mtime(self, tmp_path):
+        import time
+        old_mtime = tmp_path.stat().st_mtime
+        time.sleep(0.05)
+        _touch_cache(tmp_path)
+        assert tmp_path.stat().st_mtime > old_mtime
+
+    def test_repo_cache_entries_lists_repos(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ifcurl.git.user_cache_dir", lambda *a, **kw: str(tmp_path))
+        _make_fake_repo_cache(tmp_path, "https://example.com/org/repo")
+        _make_fake_repo_cache(tmp_path, "https://github.com/org/other")
+        entries = _repo_cache_entries()
+        urls = {e[3] for e in entries}
+        assert "https://example.com/org/repo" in urls
+        assert "https://github.com/org/other" in urls
+
+    def test_repo_cache_entries_ignores_non_repo_dirs(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ifcurl.git.user_cache_dir", lambda *a, **kw: str(tmp_path))
+        (tmp_path / "not_a_repo").mkdir()  # no repo.git subdir
+        entries = _repo_cache_entries()
+        assert len(entries) == 0
+
+    def test_evict_removes_oldest_over_limit(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ifcurl.git.user_cache_dir", lambda *a, **kw: str(tmp_path))
+        monkeypatch.setenv("IFCURL_CACHE_MAX_GB", "0.000001")  # ~1 KB limit
+        old = _make_fake_repo_cache(tmp_path, "https://old.example.com/repo", size_bytes=512)
+        import time; time.sleep(0.05)
+        new = _make_fake_repo_cache(tmp_path, "https://new.example.com/repo", size_bytes=512)
+        _evict_if_needed()
+        assert not old.exists()
+        assert new.exists()
+
+    def test_evict_no_limit_does_nothing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ifcurl.git.user_cache_dir", lambda *a, **kw: str(tmp_path))
+        monkeypatch.delenv("IFCURL_CACHE_MAX_GB", raising=False)
+        entry = _make_fake_repo_cache(tmp_path, "https://example.com/repo")
+        _evict_if_needed()
+        assert entry.exists()

@@ -36,6 +36,7 @@ import hashlib
 
 # allows git import even if git executable isn't found during import
 import os
+import shutil
 from pathlib import Path
 
 from platformdirs import user_cache_dir
@@ -97,6 +98,72 @@ def _get_repo(ifc_url: IfcUrl, token: str | None = None) -> git.Repo:
     if ifc_url.transport == "local":
         return _open_local(ifc_url.repo_path)
     return _open_remote(ifc_url.git_remote_url(), ifc_url.is_mutable_ref(), token=token)
+
+
+def _touch_cache(cache_dir: Path) -> None:
+    """Update mtime of *cache_dir* to now for LRU access tracking."""
+    try:
+        os.utime(str(cache_dir), None)
+    except OSError:
+        pass
+
+
+def _dir_size(path: Path) -> int:
+    """Return total byte size of all files under *path*."""
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def _get_max_cache_bytes() -> int | None:
+    """Return configured max disk cache size from IFCURL_CACHE_MAX_GB, or None."""
+    val = os.environ.get("IFCURL_CACHE_MAX_GB")
+    if val is None:
+        return None
+    try:
+        return int(float(val) * 1024 ** 3)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _repo_cache_entries() -> list[tuple[float, int, Path, str]]:
+    """Return all cached repo dirs as ``(last_access, size_bytes, path, remote_url)``.
+
+    Sorted oldest-first by last access.  Dirs without a ``repo.git``
+    subdirectory are ignored.
+    """
+    base = Path(user_cache_dir("ifcurl"))
+    if not base.exists():
+        return []
+    entries = []
+    for entry in base.iterdir():
+        if not entry.is_dir() or not (entry / "repo.git").exists():
+            continue
+        try:
+            atime = entry.stat().st_mtime
+            size = _dir_size(entry)
+            url_file = entry / "remote_url"
+            url = url_file.read_text().strip() if url_file.exists() else "?"
+            entries.append((atime, size, entry, url))
+        except OSError:
+            pass
+    entries.sort(key=lambda e: e[0])
+    return entries
+
+
+def _evict_if_needed() -> None:
+    """Remove oldest cached repos until total disk usage is under the configured limit."""
+    max_bytes = _get_max_cache_bytes()
+    if max_bytes is None:
+        return
+    entries = _repo_cache_entries()
+    total = sum(s for _, s, _, _ in entries)
+    for _, size, cache_dir, _ in entries:
+        if total <= max_bytes:
+            break
+        try:
+            shutil.rmtree(str(cache_dir))
+            total -= size
+        except OSError:
+            pass
 
 
 def _open_local(repo_path: str) -> git.Repo:
@@ -176,6 +243,8 @@ def _open_remote(remote_url: str, is_mutable: bool, token: str | None = None) ->
 
     if not git_dir.exists():
         repo = _clone_bare(auth, git_dir, remote_url)
+        (cache_dir / "remote_url").write_text(remote_url)
+        _evict_if_needed()
     else:
         repo = git.Repo(str(git_dir))
         if is_mutable:
@@ -198,6 +267,7 @@ def _open_remote(remote_url: str, is_mutable: bool, token: str | None = None) ->
             except git.exc.GitCommandError:
                 pass  # offline — use cached data
 
+    _touch_cache(cache_dir)
     return repo
 
 

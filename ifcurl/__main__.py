@@ -115,6 +115,34 @@ def main() -> None:
         ),
     )
 
+    cache_parser = subparsers.add_parser(
+        "cache",
+        help="Inspect and manage the local git repository cache",
+        description=(
+            "Manage bare git repositories cached under the OS cache directory\n"
+            "(~/.cache/ifcurl/ on Linux).  Use 'list' to see what is cached,\n"
+            "'prune' to enforce a size limit, or 'clear' to remove everything."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    cache_sub = cache_parser.add_subparsers(dest="cache_cmd")
+
+    cache_sub.add_parser("list", help="Show cached repos with size and last-access time")
+
+    prune_parser = cache_sub.add_parser(
+        "prune",
+        help="Remove oldest repos until cache is under the size limit",
+    )
+    prune_parser.add_argument(
+        "--max-gb", type=float, default=None, metavar="GB",
+        help=(
+            "Maximum total cache size in GB.  Defaults to IFCURL_CACHE_MAX_GB "
+            "environment variable; required if that is not set."
+        ),
+    )
+
+    cache_sub.add_parser("clear", help="Remove all cached repos")
+
     # Print help when called with no arguments
     if len(sys.argv) == 1:
         parser.print_help()
@@ -126,6 +154,8 @@ def main() -> None:
         _cmd_render(args)
     elif args.command == "serve":
         _cmd_serve(args)
+    elif args.command == "cache":
+        _cmd_cache(args)
 
 
 def _cmd_render(args: argparse.Namespace) -> None:
@@ -201,6 +231,58 @@ def _cmd_serve(args: argparse.Namespace) -> None:
         service.configure_allowed_hosts(allowed)
 
     uvicorn.run(app, host=args.host, port=args.port)
+
+
+def _cmd_cache(args: argparse.Namespace) -> None:
+    import datetime
+    import shutil as _shutil
+
+    from ifcurl.git import _evict_if_needed, _get_max_cache_bytes, _repo_cache_entries
+
+    if args.cache_cmd is None or args.cache_cmd == "list":
+        entries = _repo_cache_entries()
+        if not entries:
+            print("No cached repositories.")
+            return
+        total = 0
+        for atime, size, cache_dir, url in entries:
+            dt = datetime.datetime.fromtimestamp(atime).strftime("%Y-%m-%d %H:%M")
+            mb = size / (1024 ** 2)
+            total += size
+            print(f"  {url:<55}  {mb:>7.1f} MB  {dt}")
+        total_mb = total / (1024 ** 2)
+        max_bytes = _get_max_cache_bytes()
+        limit_str = f"  limit: {max_bytes / (1024**3):.1f} GB" if max_bytes else ""
+        print(f"Total: {total_mb:.1f} MB  ({len(entries)} repos){limit_str}")
+
+    elif args.cache_cmd == "prune":
+        max_gb = args.max_gb
+        if max_gb is None:
+            if os.environ.get("IFCURL_CACHE_MAX_GB"):
+                max_gb = float(os.environ["IFCURL_CACHE_MAX_GB"])
+            else:
+                print("Error: --max-gb is required when IFCURL_CACHE_MAX_GB is not set", file=sys.stderr)
+                sys.exit(1)
+        os.environ["IFCURL_CACHE_MAX_GB"] = str(max_gb)
+        before = sum(s for _, s, _, _ in _repo_cache_entries())
+        _evict_if_needed()
+        after = sum(s for _, s, _, _ in _repo_cache_entries())
+        freed = (before - after) / (1024 ** 2)
+        remaining = after / (1024 ** 2)
+        print(f"Freed {freed:.1f} MB — {remaining:.1f} MB remaining.")
+
+    elif args.cache_cmd == "clear":
+        entries = _repo_cache_entries()
+        if not entries:
+            print("Nothing to clear.")
+            return
+        total = sum(s for _, s, _, _ in entries)
+        for _, _, cache_dir, _ in entries:
+            try:
+                _shutil.rmtree(str(cache_dir))
+            except OSError as exc:
+                print(f"Warning: could not remove {cache_dir}: {exc}", file=sys.stderr)
+        print(f"Cleared {total / (1024**2):.1f} MB ({len(entries)} repos).")
 
 
 if __name__ == "__main__":

@@ -95,7 +95,7 @@ def _is_private_ip(host: str) -> bool:
 # Tier 2: (commit_hexsha, path) → IFC bytes
 # ---------------------------------------------------------------------------
 
-_T2_MAX = 8
+_T2_MAX: int = int(os.environ.get("IFCURL_T2_MAX", "8"))
 _t2_cache: OrderedDict[tuple[str, str], bytes] = OrderedDict()
 _t2_lock = threading.Lock()
 
@@ -122,7 +122,7 @@ def _t2_put(hexsha: str, path: str, data: bytes) -> None:
 # Tier 3: (commit_hexsha, path, selector) → frozenset[GlobalId]
 # ---------------------------------------------------------------------------
 
-_T3_MAX = 64
+_T3_MAX: int = int(os.environ.get("IFCURL_T3_MAX", "64"))
 _t3_cache: OrderedDict[tuple[str, str, str], frozenset[str]] = OrderedDict()
 _t3_lock = threading.Lock()
 
