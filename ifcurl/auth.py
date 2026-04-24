@@ -69,8 +69,16 @@ def inject_token(https_url: str, token: str) -> str:
     ``https://host/org/repo`` → ``https://<token>@host/org/repo``
 
     This format is accepted by GitHub, GitLab, Gitea, and most other git
-    hosting platforms.  The token is never stored — it only appears in the
-    git command line arguments used for clone/fetch operations.
+    hosting platforms.  The token is never stored on disk — it only lives
+    in the authenticated URL passed to git clone/fetch as a command-line
+    argument.
+
+    **Known limitation**: the token is visible in the OS process list
+    (``ps aux``) for the duration of the git subprocess.  On shared servers
+    this is a potential credential leak.  The standard mitigation is to use
+    ``GIT_ASKPASS`` or a credential helper, which this implementation does
+    not yet do.  As a workaround, configure SSH transport (``git@host:…``)
+    rather than HTTPS for private repositories on shared hosts.
     """
     parsed = urlparse(https_url)
     port_suffix = f":{parsed.port}" if parsed.port else ""

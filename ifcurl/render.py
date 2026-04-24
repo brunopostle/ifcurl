@@ -33,6 +33,14 @@ import multiprocessing
 import os
 import tempfile
 
+# Cap parallel geometry workers per render call.  In service deployments,
+# N concurrent requests × cpu_count workers each can saturate the host.
+# Override with IFCURL_RENDER_WORKERS (e.g. "8" for a dedicated render host).
+_WORKER_COUNT: int = min(
+    multiprocessing.cpu_count(),
+    int(os.environ.get("IFCURL_RENDER_WORKERS", "4")),
+)
+
 import ifcopenshell
 import ifcopenshell.geom
 import ifcopenshell.guid
@@ -327,7 +335,7 @@ def _render_with_types(
             include.extend(tmp.by_id(e.id()) for e in selector_elements)
 
         settings = _build_geom_settings(tmp)
-        iterator = ifcopenshell.geom.iterator(settings, tmp, multiprocessing.cpu_count(), include=include)
+        iterator = ifcopenshell.geom.iterator(settings, tmp, _WORKER_COUNT, include=include)
         if not iterator.initialize():
             raise ValueError("Type entities have no renderable geometry")
 
@@ -436,12 +444,12 @@ def render(
 
     if selector_elements is not None and visibility == "isolate":
         iterator = ifcopenshell.geom.iterator(
-            settings, model, multiprocessing.cpu_count(), include=selector_elements
+            settings, model, _WORKER_COUNT, include=selector_elements
         )
     else:
         exclude = list(model.by_type("IfcOpeningElement"))
         iterator = ifcopenshell.geom.iterator(
-            settings, model, multiprocessing.cpu_count(),
+            settings, model, _WORKER_COUNT,
             exclude=exclude if exclude else None,
         )
 
