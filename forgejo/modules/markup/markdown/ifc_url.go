@@ -206,6 +206,7 @@ func inlineText(n ast.Node, src []byte) ([]byte, bool) {
 
 type ifcURLRenderer struct {
 	previewServiceURL string
+	serviceToken      string
 }
 
 func (r *ifcURLRenderer) RegisterFuncs(reg renderer.NodeRendererFuncRegisterer) {
@@ -219,6 +220,9 @@ func (r *ifcURLRenderer) render(w util.BufWriter, _ []byte, node ast.Node, enter
 	n := node.(*ifcURLNode)
 
 	previewURL := r.previewServiceURL + "/preview?url=" + url.QueryEscape(n.rawURL)
+	if r.serviceToken != "" {
+		previewURL += "&token=" + url.QueryEscape(r.serviceToken)
+	}
 	viewerURL := "/assets/viewer.html?url=" + url.QueryEscape(n.rawURL)
 	safeIfc := htmlEscapeString(n.rawURL)
 	safePreview := htmlEscapeString(previewURL)
@@ -247,11 +251,13 @@ func htmlEscapeString(s string) string {
 
 type ifcURLExtension struct {
 	previewServiceURL string
+	serviceToken      string
 }
 
 func NewIfcURLExtension() goldmark.Extender {
 	return &ifcURLExtension{
 		previewServiceURL: setting.IfcURL.PreviewServiceURL,
+		serviceToken:      setting.IfcURL.ServiceToken,
 	}
 }
 
@@ -263,7 +269,10 @@ func (e *ifcURLExtension) Extend(m goldmark.Markdown) {
 	)
 	m.Renderer().AddOptions(
 		renderer.WithNodeRenderers(
-			util.Prioritized(&ifcURLRenderer{previewServiceURL: e.previewServiceURL}, 999),
+			util.Prioritized(&ifcURLRenderer{
+				previewServiceURL: e.previewServiceURL,
+				serviceToken:      e.serviceToken,
+			}, 999),
 		),
 	)
 }

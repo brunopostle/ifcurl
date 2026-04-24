@@ -267,13 +267,15 @@ class BcfRequest(BaseModel):
 
 
 @app.get("/preview")
-def preview_get(url: str) -> Response:
+def preview_get(url: str, token: str | None = None) -> Response:
     """GET variant of POST /preview for use in HTML ``<img src>`` tags.
 
-    The ``url`` query parameter is the ifc:// URL to render.  All caching
-    and authentication behaviour is identical to the POST endpoint.
+    The ``url`` query parameter is the ifc:// URL to render.  The optional
+    ``token`` parameter accepts a bearer token for private-repository access,
+    mirroring the JSON body ``token`` field of POST /preview.  All caching
+    and authentication behaviour is otherwise identical to the POST endpoint.
     """
-    return preview(PreviewRequest(url=url))
+    return preview(PreviewRequest(url=url, token=token))
 
 
 @app.post("/preview")

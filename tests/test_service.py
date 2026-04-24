@@ -314,6 +314,20 @@ class TestGetEndpoint:
         r = client.get("/preview", params={"url": "ifc:///some/path@HEAD?path=m.ifc"})
         assert r.status_code == 403
 
+    def test_get_accepts_token_param(self, model_with_geometry):
+        ifc_bytes = model_with_geometry.to_string().encode()
+        received = {}
+
+        def mock_fetch(ifc_url, token=None):
+            received["token"] = token
+            return FAKE_HEXSHA, ifc_bytes
+
+        with patch("ifcurl.service.fetch_ifc", mock_fetch), \
+             patch("ifcurl.service.render_mod.render", return_value=FAKE_PNG):
+            r = client.get("/preview", params={"url": MUTABLE_URL, "token": "mytoken"})
+        assert r.status_code == 200
+        assert received["token"] == "mytoken"
+
 
 # ---------------------------------------------------------------------------
 # Tier 2: LRU eviction

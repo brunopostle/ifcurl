@@ -64,7 +64,7 @@
     }
     #status:empty { display: none; }
     body.drag-over::after {
-      content: "Drop ifc:// URL to load";
+      content: "Drop ifc:// URL or .bcf file";
       position: fixed; inset: 0; z-index: 100;
       display: flex; align-items: center; justify-content: center;
       font-size: 24px; color: #f0f0f0;
@@ -150,8 +150,10 @@
                placeholder="IfcWall" spellcheck="false">
       </div>
     </div>
-    <!-- Row 3: BCF export form (hidden until BCF button clicked) -->
+    <!-- Row 3: BCF export/import form (hidden until BCF button clicked) -->
     <div id="bcf-row" class="trow" style="display:none">
+      <button id="bcf-import-btn" class="tb-btn" title="Import a .bcf viewpoint to restore camera and selection">Import .bcf</button>
+      <input type="file" id="bcf-import-input" accept=".bcf" style="display:none">
       <div class="field" style="flex:2">
         <label>title</label>
         <input id="bcf-title" class="ti" type="text" placeholder="IFC View" spellcheck="false">
@@ -262,12 +264,14 @@
     // Disable camera controls while any input has focus.
     function onInputFocus() { if (cameraControls) cameraControls.enabled = false; }
     function onInputBlur()  { if (cameraControls) cameraControls.enabled = true;  }
-    const bcfBtn       = document.getElementById("bcf-btn");
-    const bcfRow       = document.getElementById("bcf-row");
-    const bcfTitleIn   = document.getElementById("bcf-title");
-    const bcfCommentIn = document.getElementById("bcf-comment");
-    const bcfCancelBtn = document.getElementById("bcf-cancel-btn");
-    const bcfExportBtn = document.getElementById("bcf-export-btn");
+    const bcfBtn        = document.getElementById("bcf-btn");
+    const bcfRow        = document.getElementById("bcf-row");
+    const bcfTitleIn    = document.getElementById("bcf-title");
+    const bcfCommentIn  = document.getElementById("bcf-comment");
+    const bcfCancelBtn  = document.getElementById("bcf-cancel-btn");
+    const bcfExportBtn  = document.getElementById("bcf-export-btn");
+    const bcfImportBtn  = document.getElementById("bcf-import-btn");
+    const bcfImportInput = document.getElementById("bcf-import-input");
 
     function bcfPanelOpen(open) {
       bcfRow.style.display = open ? "" : "none";
@@ -279,6 +283,13 @@
     bcfExportBtn.addEventListener("click", async () => {
       await generateBcf(bcfTitleIn.value.trim(), bcfCommentIn.value.trim());
       bcfPanelOpen(false);
+    });
+
+    bcfImportBtn.addEventListener("click", () => bcfImportInput.click());
+    bcfImportInput.addEventListener("change", async () => {
+      const file = bcfImportInput.files[0];
+      if (file) await importBcf(file);
+      bcfImportInput.value = "";
     });
 
     copyUrlBtn.addEventListener("click", async () => {
@@ -347,9 +358,16 @@
     document.body.addEventListener("dragleave", e => {
       if (!e.relatedTarget) document.body.classList.remove("drag-over");
     });
-    document.body.addEventListener("drop", e => {
+    document.body.addEventListener("drop", async e => {
       e.preventDefault();
       document.body.classList.remove("drag-over");
+      // Check for .bcf file drops first.
+      for (const file of (e.dataTransfer.files || [])) {
+        if (file.name.toLowerCase().endsWith(".bcf")) {
+          await importBcf(file);
+          return;
+        }
+      }
       const candidates = [
         e.dataTransfer.getData("text/uri-list"),
         e.dataTransfer.getData("text/plain"),
@@ -418,7 +436,8 @@
         }
       }
 
-      const newIfcUrl = base + "?" + qs.toString().replace(/%2C/g, ",").replace(/%2B/g, "+");
+      const newIfcUrl = base + "?" + qs.toString()
+        .replace(/%2C/g, ",").replace(/%2B/g, "+").replace(/%24/g, "$");
 
       urlInput.value = newIfcUrl;
 
@@ -655,6 +674,101 @@
       a.download = "view.bcf";
       a.click();
       URL.revokeObjectURL(a.href);
+    }
+
+    // -----------------------------------------------------------------------
+    // BCF 2.1 import — read a .bcf zip, extract the first viewpoint, apply
+    // camera/clips/GUIDs to the current ifc:// URL and reload the viewer.
+    // -----------------------------------------------------------------------
+    async function importBcf(file) {
+      const src = urlInput.value.trim();
+      if (!src) {
+        statusEl.textContent = "Load a model first, then import a BCF viewpoint";
+        return;
+      }
+
+      statusEl.textContent = "Importing BCF…";
+      try {
+        const zip = await JSZip.loadAsync(file);
+
+        // Find the first viewpoint.bcfv entry.
+        const vpPath = Object.keys(zip.files).find(p => p.endsWith("viewpoint.bcfv"));
+        if (!vpPath) {
+          statusEl.textContent = "BCF: no viewpoint found in file";
+          return;
+        }
+
+        const vpXml = await zip.file(vpPath).async("text");
+        const doc = new DOMParser().parseFromString(vpXml, "text/xml");
+
+        const getXYZ = (parent, tag) => {
+          const el = parent.querySelector(tag);
+          if (!el) return null;
+          const v = ["X", "Y", "Z"].map(c => parseFloat(el.querySelector(c)?.textContent));
+          return v.some(isNaN) ? null : v;
+        };
+
+        // Camera
+        let camera = null, fov = null, scale = null;
+        const perspCam = doc.querySelector("PerspectiveCamera");
+        const orthoCam = doc.querySelector("OrthogonalCamera");
+        const camEl    = perspCam || orthoCam;
+        if (camEl) {
+          const pos = getXYZ(camEl, "CameraViewPoint");
+          const dir = getXYZ(camEl, "CameraDirection");
+          const up  = getXYZ(camEl, "CameraUpVector");
+          if (pos && dir && up) {
+            camera = [...pos, ...dir, ...up];
+            if (perspCam) {
+              fov = parseFloat(perspCam.querySelector("FieldOfView")?.textContent);
+              if (isNaN(fov)) fov = null;
+            } else {
+              scale = parseFloat(orthoCam.querySelector("ViewToWorldScale")?.textContent);
+              if (isNaN(scale)) scale = null;
+            }
+          }
+        }
+
+        // Clipping planes
+        const clips = [];
+        for (const cp of doc.querySelectorAll("ClippingPlane")) {
+          const loc = getXYZ(cp, "Location");
+          const dir = getXYZ(cp, "Direction");
+          if (loc && dir) clips.push([...loc, ...dir]);
+        }
+
+        // Component GUIDs from Selection
+        const guids = Array.from(doc.querySelectorAll("Components Selection Component"))
+          .map(el => el.getAttribute("IfcGuid"))
+          .filter(Boolean);
+
+        // Build updated URL: keep repo/ref/path, replace viewpoint params.
+        const qIdx = src.indexOf("?");
+        const base = qIdx < 0 ? src : src.slice(0, qIdx);
+        const qs   = new URLSearchParams(qIdx < 0 ? "" : src.slice(qIdx + 1));
+
+        qs.delete("camera"); qs.delete("fov"); qs.delete("scale"); qs.delete("clip");
+        qs.delete("selector"); qs.delete("visibility");
+
+        if (camera) {
+          const f = v => parseFloat(v.toFixed(4));
+          qs.set("camera", camera.map(f).join(","));
+          if (fov   != null) qs.set("fov",   fov.toString());
+          if (scale != null) qs.set("scale", scale.toString());
+        }
+        for (const clip of clips) {
+          const f = v => parseFloat(v.toFixed(4));
+          qs.append("clip", clip.map(f).join(","));
+        }
+        if (guids.length > 0) qs.set("selector", guids.join("+"));
+
+        const newUrl = base + "?" + qs.toString()
+          .replace(/%2C/g, ",").replace(/%2B/g, "+").replace(/%24/g, "$");
+        loadUrl(newUrl);
+      } catch (err) {
+        statusEl.textContent = `BCF import error: ${err.message}`;
+        console.error(err);
+      }
     }
 
     // -----------------------------------------------------------------------

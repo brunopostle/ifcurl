@@ -21,6 +21,7 @@ index 4ab9e7b2d1..c1fad254b4 100644
 +// IfcURL holds configuration for the ifcurl preview service integration.
 +var IfcURL = struct {
 +	PreviewServiceURL string `ini:"PREVIEW_SERVICE_URL"`
++	ServiceToken      string `ini:"SERVICE_TOKEN"`
 +}{}
 +
  func loadMarkupFrom(rootCfg ConfigProvider) {

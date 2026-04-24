@@ -18,7 +18,10 @@ import (
 func newTestMd(t *testing.T) goldmark.Markdown {
 	t.Helper()
 	setting.IfcURL.PreviewServiceURL = "http://localhost:8000"
-	t.Cleanup(func() { setting.IfcURL.PreviewServiceURL = "" })
+	t.Cleanup(func() {
+		setting.IfcURL.PreviewServiceURL = ""
+		setting.IfcURL.ServiceToken = ""
+	})
 	return goldmark.New(goldmark.WithExtensions(markdown.NewIfcURLExtension()))
 }
 
@@ -81,4 +84,22 @@ func TestIfcURL_InlineAmongText(t *testing.T) {
 	out := convert(t, md, "See ifc://example.com/org/repo@HEAD?path=m.ifc for details.")
 	assert.Contains(t, out, `<figure class="ifcurl-preview">`)
 	assert.Contains(t, out, "for details.")
+}
+
+func TestIfcURL_ServiceTokenInPreviewURL(t *testing.T) {
+	setting.IfcURL.PreviewServiceURL = "http://localhost:8000"
+	setting.IfcURL.ServiceToken = "mytoken123"
+	t.Cleanup(func() {
+		setting.IfcURL.PreviewServiceURL = ""
+		setting.IfcURL.ServiceToken = ""
+	})
+	md := goldmark.New(goldmark.WithExtensions(markdown.NewIfcURLExtension()))
+	out := convert(t, md, "[label](ifc://example.com/org/repo@HEAD?path=model.ifc)")
+	assert.Contains(t, out, `&token=mytoken123`)
+}
+
+func TestIfcURL_NoTokenInPreviewURLWhenUnset(t *testing.T) {
+	md := newTestMd(t)
+	out := convert(t, md, "[label](ifc://example.com/org/repo@HEAD?path=model.ifc)")
+	assert.NotContains(t, out, `token=`)
 }

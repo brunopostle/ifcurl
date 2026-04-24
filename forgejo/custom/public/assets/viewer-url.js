@@ -39,7 +39,7 @@ export function buildIfcUrl(repo, ref, path, selector) {
   const qs = new URLSearchParams();
   if (path)     qs.set("path",     path);
   if (selector) qs.set("selector", selector);
-  const qsStr = qs.toString().replace(/%2C/g, ",").replace(/%2B/g, "+");
+  const qsStr = qs.toString().replace(/%2C/g, ",").replace(/%2B/g, "+").replace(/%24/g, "$");
   return `ifc://${repo}@${ref}${qsStr ? "?" + qsStr : ""}`;
 }
 
