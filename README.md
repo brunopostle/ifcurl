@@ -123,9 +123,14 @@ with a Forgejo/Gitea instance.
 
 ```bash
 pip install "ifcurl[service]"
-ifcurl serve                          # 127.0.0.1:8000
-ifcurl serve --host 0.0.0.0 --port 9000
+ifcurl serve --allowed-hosts git.example.com     # restrict to your Forgejo host
+ifcurl serve --host 0.0.0.0 --port 9000 --allowed-hosts git.example.com
 ```
+
+Pass `--allowed-hosts` as a comma-separated list of hostnames (with optional
+`:port`) the service is allowed to fetch from. This prevents the preview
+endpoint from being used to reach internal services. Omitting it allows all
+non-private remote hosts.
 
 ### Endpoints
 
@@ -177,6 +182,9 @@ go build -tags 'sqlite sqlite_unlock_notify' \
 sudo cp forgejo/custom/public/assets/viewer*.* /etc/forgejo/public/assets/
 sudo cp forgejo/templates/custom/footer.tmpl /var/lib/forgejo/custom/templates/custom/
 sudo systemctl restart forgejo
+
+# Start preview service (restrict to this Forgejo host)
+ifcurl serve --allowed-hosts git.example.com
 ```
 
 Add to `/etc/forgejo/conf/app.ini`:

@@ -106,6 +106,14 @@ def main() -> None:
     )
     serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     serve_parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
+    serve_parser.add_argument(
+        "--allowed-hosts", default="", metavar="HOSTS",
+        help=(
+            "Comma-separated list of git hostnames (with optional :port) the service "
+            "is permitted to fetch from, e.g. 'github.com,gitlab.example.com:3000'. "
+            "When omitted, all non-private remote hosts are allowed."
+        ),
+    )
 
     # Print help when called with no arguments
     if len(sys.argv) == 1:
@@ -178,6 +186,7 @@ def _cmd_serve(args: argparse.Namespace) -> None:
     try:
         import uvicorn
 
+        from ifcurl import service
         from ifcurl.service import app
     except ImportError:
         print(
@@ -186,6 +195,10 @@ def _cmd_serve(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    if args.allowed_hosts:
+        allowed = {h.strip() for h in args.allowed_hosts.split(",") if h.strip()}
+        service.configure_allowed_hosts(allowed)
 
     uvicorn.run(app, host=args.host, port=args.port)
 

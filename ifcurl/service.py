@@ -36,6 +36,7 @@ Tier 4  sha256(url) → PNG bytes
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import os
 import tempfile
 import threading
@@ -62,6 +63,32 @@ app = FastAPI(
     description="Renders ifc:// URLs to PNG images for embedding in Gitea and other consumers.",
     version="0.0.0",
 )
+
+# ---------------------------------------------------------------------------
+# SSRF protection
+# ---------------------------------------------------------------------------
+
+_allowed_hosts: set[str] | None = None
+
+
+def configure_allowed_hosts(hosts: set[str] | None) -> None:
+    """Set the allowlist of git hosts the service will fetch from.
+
+    Pass a set of hostname strings (optionally with :port) to restrict which
+    hosts are contacted.  Pass None to allow all non-private remote hosts.
+    """
+    global _allowed_hosts
+    _allowed_hosts = hosts
+
+
+def _is_private_ip(host: str) -> bool:
+    """Return True if *host* is a literal private/loopback/link-local IP."""
+    bare = host.split(":")[0].strip("[]")  # strip port and IPv6 brackets
+    try:
+        addr = ipaddress.ip_address(bare)
+        return addr.is_loopback or addr.is_link_local or addr.is_private or addr.is_reserved
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +273,15 @@ def preview(request: PreviewRequest) -> Response:
 
     if ifc_url.path is None:
         raise HTTPException(status_code=400, detail="URL has no 'path' parameter")
+
+    # --- SSRF protection ---
+    if ifc_url.transport == "local":
+        raise HTTPException(status_code=403, detail="Local file transport is not permitted in service mode")
+    if _allowed_hosts is not None:
+        if ifc_url.host not in _allowed_hosts:
+            raise HTTPException(status_code=403, detail=f"Host {ifc_url.host!r} is not in the allowed-hosts list")
+    elif _is_private_ip(ifc_url.host):
+        raise HTTPException(status_code=403, detail="Requests to private/loopback addresses are not permitted")
 
     # --- Tier 4 / 4m: cached PNG ---
     if ifc_url.is_mutable_ref():

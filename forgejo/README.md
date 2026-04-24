@@ -116,6 +116,25 @@ sudo systemctl restart forgejo
 
 ---
 
+## Starting the preview service
+
+Run the preview service co-located with Forgejo, passing `--allowed-hosts`
+set to your Forgejo hostname so the service will only fetch from that instance:
+
+```bash
+ifcurl serve --allowed-hosts git.example.com
+```
+
+For a Forgejo instance on a non-standard port (e.g. 3000 for local dev):
+
+```bash
+ifcurl serve --allowed-hosts localhost:3000
+```
+
+`--allowed-hosts` accepts a comma-separated list. Omitting it allows all
+non-private remote hosts, which is unsafe if the service is reachable from
+untrusted clients.
+
 ## Configuration
 
 Add to `/etc/forgejo/conf/app.ini`:
