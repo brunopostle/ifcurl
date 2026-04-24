@@ -1,24 +1,50 @@
 # ifcurl
 
-**ifcurl** is a command-line tool and Python library for resolving `ifc://` URLs — a URL scheme for addressing a specific view of an IFC building model stored in a git repository.
-
-A single URL encodes the model source (git host, repository, ref), an optional element selection, and an optional camera viewpoint. ifcurl fetches the model and renders a PNG, the way curl fetches a web resource.
+**ifcurl** is a URL scheme, tools, and server integration for addressing shareable views of IFC building models stored in git repositories.
 
 ```
-ifcurl render "ifc://github.com/brunopostle/simple-ifc@heads/main?path=_test_simple.ifc"
+ifc://github.com/brunopostle/simple-ifc@heads/main?path=building.ifc&selector=IfcWall&fov=60
 ```
+
+An `ifc://` URL encodes everything needed to reproduce a specific model view: the git source, the file, which elements to show, and the camera position. Like a permalink for BIM — paste it, share it, embed it in documentation.
 
 ---
 
-## URL format
+## Architecture
+
+Four interlocking components:
+
+| Component | Language | What it does |
+|---|---|---|
+| **Python library + CLI** | Python | Parse ifc:// URLs, fetch IFC from git, render PNG |
+| **Preview service** | Python | HTTP server — PNGs on demand, IFC file proxy |
+| **Forgejo integration** | Go + assets | Inline markdown previews, "View in 3D" button |
+| **Browser viewer** | JavaScript | Interactive WebGL viewer, served as a Forgejo asset |
+
+```
+Markdown source:
+  [Section cut](ifc://host/org/repo@heads/main?path=building.ifc&clip=0,0,3,0,0,-1)
+                                      │
+Forgejo renders (via Go patch):        │
+  <figure>                             │
+    <img src="/preview?url=..."> ──────┤── preview service renders PNG
+    <a href="/assets/viewer.html?url=…">   browser viewer (WebGL, interactive)
+  </figure>
+```
+
+The viewer is also reachable directly — paste or type an `ifc://` URL into its toolbar, or drag one onto the page.
+
+---
+
+## ifc:// URL scheme
+
+Full specification: [`SPECIFICATION.md`](SPECIFICATION.md)
 
 ```
 ifc://[user@]host/org/repo@<ref>?<parameters>
 ```
 
-### Transport
-
-Transport is inferred from the URL structure — no prefix required:
+Transport is inferred from the URL structure — no prefix needed:
 
 | URL form | Transport |
 |---|---|
@@ -26,7 +52,7 @@ Transport is inferred from the URL structure — no prefix required:
 | `ifc://git@host/org/repo` | SSH |
 | `ifc:///path/to/repo` | Local file |
 
-### Ref
+Refs follow git namespace form to avoid branch/tag ambiguity:
 
 | Form | Meaning |
 |---|---|
@@ -35,192 +61,150 @@ Transport is inferred from the URL structure — no prefix required:
 | `@abc123def` | Commit hash |
 | `@HEAD` | Default branch |
 
-### Parameters
+Key query parameters:
 
 | Parameter | Description |
 |---|---|
-| `path=` | Path to the IFC file within the repository |
-| `selector=` | [IfcOpenShell selector](https://docs.ifcopenshell.org/ifcopenshell-python/selector_syntax.html) expression to filter elements |
-| `camera=px,py,pz,dx,dy,dz,ux,uy,uz` | Camera position, view direction, and up vector in IFC world coordinates |
-| `fov=60` | Perspective field of view in degrees (use with `camera`) |
-| `scale=50` | Orthographic view-to-world scale (use with `camera`) |
-| `clip=px,py,pz,nx,ny,nz` | Clipping plane — repeatable |
-| `visibility=` | `highlight` (default), `ghost`, or `isolate` |
-
-### Visibility modes
-
-| Mode | Behaviour |
-|---|---|
-| `highlight` | All elements shown; selected elements shown in highlight colour |
-| `ghost` | Selected elements shown normally; all others dimmed |
-| `isolate` | Only selected elements shown |
+| `path=` | IFC file path within the repository |
+| `selector=IfcWall` | [IfcOpenShell selector](https://docs.ifcopenshell.org/ifcopenshell-python/selector_syntax.html) — filter elements; `+` for union |
+| `camera=px,py,pz,dx,dy,dz,ux,uy,uz` | Camera position, direction, up in IFC world coordinates |
+| `fov=60` | Perspective field of view in degrees |
+| `scale=50` | Orthographic view-to-world scale |
+| `clip=px,py,pz,nx,ny,nz` | Clipping plane — point + normal in IFC coords (repeatable) |
+| `visibility=` | `highlight` · `ghost` · `isolate` |
 
 ---
 
-## Examples
+## Python library and CLI
 
-Open a model at the default isometric view:
+Fetch an IFC file from a git repository and render it to PNG.
 
-```
+```bash
+pip install "ifcurl[render]"
 ifcurl render "ifc://github.com/brunopostle/simple-ifc@heads/main?path=_test_simple.ifc"
-```
-
-Walls only, ghost mode:
-
-```
-ifcurl render "ifc://github.com/brunopostle/simple-ifc@heads/main?path=_test_simple.ifc&selector=IfcWall&visibility=ghost"
-```
-
-Perspective view with a clipping plane (section cut at z=3):
-
-```
-ifcurl render "ifc://example.com/org/project@abc123def?path=models/building.ifc&camera=10,20,5,0,-1,0,0,0,1&fov=60&clip=0,0,3,0,0,-1"
-```
-
-Orthographic plan view from above:
-
-```
-ifcurl render "ifc://example.com/org/project@tags/v2.0?path=models/building.ifc&camera=0,0,8,0,0,-1,0,1,0&scale=50"
-```
-
-Local repository:
-
-```
-ifcurl render "ifc:///home/alice/projects/office@HEAD?path=model.ifc"
-```
-
-Save to a specific file:
-
-```
 ifcurl render "ifc://..." -o output.png
 ```
 
----
-
-## Installation
-
-```bash
-pip install "ifcurl[render]"    # CLI rendering tool
-pip install "ifcurl[service]"   # preview service (includes render)
-```
-
-**Dependencies:**
-
-- [ifcopenshell](https://ifcopenshell.org) — IFC parsing and selector execution
-- [GitPython](https://gitpython.readthedocs.io) — git repository access
-- [platformdirs](https://platformdirs.readthedocs.io) — OS-appropriate cache and config directories
-- [pyvista](https://pyvista.org) + [numpy](https://numpy.org) — 3D rendering (`[render]` and `[service]` extras)
-- [FastAPI](https://fastapi.tiangolo.com) + [uvicorn](https://www.uvicorn.org) — HTTP service (`[service]` extra)
-
----
-
-## Python library
+Use as a library:
 
 ```python
 from ifcurl import IfcUrl, fetch_ifc
-from ifcurl import render as render_mod
-import ifcopenshell
-import tempfile, os
+from ifcurl.render import render
 
 url = IfcUrl.parse(
-    "ifc://github.com/brunopostle/simple-ifc@heads/main"
-    "?path=_test_simple.ifc&selector=IfcWall&visibility=ghost"
+    "ifc://example.com/org/repo@heads/main"
+    "?path=models/building.ifc&selector=IfcWall&visibility=ghost"
 )
+hexsha, ifc_bytes = fetch_ifc(url)   # hexsha is stable even for mutable refs
+model = ifcopenshell.open(...)       # write ifc_bytes to tmp file first
 
-# fetch_ifc returns (commit_hexsha, ifc_bytes) — the hexsha is useful
-# as a cache key even when the URL uses a mutable ref like a branch
-hexsha, ifc_bytes = fetch_ifc(url)
+png = render(model, selector=url.selector, clips=url.clips or None,
+             camera=url.camera, fov=url.fov, visibility=url.visibility)
+```
 
-tmp_fd, tmp_path = tempfile.mkstemp(suffix=".ifc")
-os.write(tmp_fd, ifc_bytes)
-os.close(tmp_fd)
-model = ifcopenshell.open(tmp_path)
-os.unlink(tmp_path)
+Remote repositories are cloned as bare repos to the OS cache directory
+(`~/.cache/ifcurl/` on Linux) on first use. Mutable refs (`@heads/`, `@HEAD`)
+trigger a `git fetch`; immutable refs (commit hashes, tags) use the cache
+as-is.
 
-png_bytes = render_mod.render(
-    model,
-    selector=url.selector,
-    camera=url.camera,
-    fov=url.fov,
-    scale=url.scale,
-    clips=url.clips or None,
-    visibility=url.visibility,
-)
+For private repositories, configure tokens per host in
+`~/.config/ifcurl/tokens.json`:
 
-with open("output.png", "wb") as f:
-    f.write(png_bytes)
+```json
+{ "hosts": { "github.com": "ghp_…", "gitlab.example.com": "glpat_…" } }
 ```
 
 ---
 
 ## Preview service
 
-ifcurl includes an HTTP preview service for use by Gitea and other consumers.
+An HTTP service that renders `ifc://` URLs to PNG, intended for co-location
+with a Forgejo/Gitea instance.
 
 ```bash
+pip install "ifcurl[service]"
 ifcurl serve                          # 127.0.0.1:8000
 ifcurl serve --host 0.0.0.0 --port 9000
 ```
 
-### Endpoint
+### Endpoints
 
-```
-POST /preview
-Content-Type: application/json
+| Endpoint | Description |
+|---|---|
+| `POST /preview` | Render an ifc:// URL to PNG |
+| `GET /preview?url=ifc://…` | Same, via query string |
+| `GET /viewer?url=ifc://…` | Redirect to the Forgejo browser viewer |
+| `GET /proxy?url=<raw-url>` | Proxy an IFC file (CORS workaround) |
 
-{"url": "ifc://...", "token": "optional-git-token"}
-```
-
-Returns `image/png`.
-
-The optional `token` field is a bearer token for git authentication. When provided it takes precedence over any token in the config file. Intended for co-located Gitea deployments that pass the requesting user's session token.
-
-### Authentication
-
-For private repositories, configure a token per host in `~/.config/ifcurl/tokens.json` (Linux/macOS) or `%APPDATA%\ifcurl\tokens.json` (Windows):
-
-```json
-{
-    "hosts": {
-        "github.com": "ghp_your_token_here",
-        "gitlab.example.com": "glpat_your_token_here"
-    }
-}
-```
-
-Tokens are injected into HTTPS remote URLs (`https://<token>@host/path`) for clone and fetch operations and are never written to the on-disk git config. SSH transport uses the platform key store and ignores this config.
-
-### Service caching
+### Caching
 
 | Tier | Key | Contents | Notes |
 |---|---|---|---|
-| 2 | commit hash + path | IFC bytes | In-memory LRU, avoids repeated git blob reads |
-| 3 | commit hash + path + selector | Resolved GlobalId set | In-memory LRU, avoids re-running selector |
-| 4 | SHA-256 of full URL | Rendered PNG | Filesystem, immutable refs only |
+| 2 | commit hash + path | IFC bytes | In-memory LRU |
+| 3 | commit hash + path + selector | Resolved element set | In-memory LRU |
+| 4 | SHA-256 of full URL | Rendered PNG | Filesystem; immutable refs only |
 
-Tier 4 is never written for mutable refs (`@heads/`, `@HEAD`) since the underlying commit may change.
-
-### Web IFC viewer
-
-The preview service also hosts a browser-based 3D viewer:
-
-```
-GET /viewer?url=ifc://...
-```
-
-The viewer page loads [`@thatopen/components`](https://github.com/ThatOpenCompany/that-open-engine) from CDN and renders the model client-side using WebGL.  IFC bytes are fetched via a same-origin proxy endpoint to avoid CORS restrictions:
-
-```
-GET /proxy?url=<raw-forgejo-url>
-```
-
-**Design note:** The `/proxy` endpoint exists because Forgejo does not set `Access-Control-Allow-Origin` on raw file responses, so the browser cannot fetch the IFC directly.  If Forgejo were configured to send CORS headers (or if the viewer were served from the same origin as Forgejo), the proxy would be unnecessary and the browser could fetch the IFC file directly.  The proxy also does not currently forward authentication credentials, so it only works for publicly-accessible files.
+Tier 4 is never written for mutable refs (`@heads/`, `@HEAD`).
 
 ---
 
-## Remote repository caching
+## Forgejo integration
 
-Remote repositories are cloned as bare repos to the OS cache directory (`~/.cache/ifcurl/` on Linux, `~/Library/Caches/ifcurl/` on macOS, `%LOCALAPPDATA%\ifcurl\Cache\` on Windows) on first use. Subsequent calls to the same repository reuse the cache. Mutable refs (`@heads/`, `@HEAD`) trigger a `git fetch` to pick up upstream changes; immutable refs (commit hashes, tags) use the cache as-is.
+A source patch for Forgejo that adds:
+
+- **Inline markdown preview** — `[label](ifc://…)` and bare `ifc://…` in
+  markdown render as `<figure>` preview images linked to the browser viewer.
+- **"View in 3D" button** — appears on `.ifc` file view pages alongside Raw /
+  Permalink / History.
+- **Browser viewer asset** — `viewer.html` + `viewer-url.js` served at
+  `/assets/viewer.html`.
+
+See [`forgejo/README.md`](forgejo/README.md) for full apply, build, and
+deployment instructions.
+
+### Quick summary
+
+```bash
+# Apply the Go source patch
+cp forgejo/modules/markup/markdown/ifc_url{,_test}.go /path/to/forgejo/modules/markup/markdown/
+cd /path/to/forgejo && git apply /path/to/ifcurl/forgejo/go.patch
+
+# Build Forgejo
+go build -tags 'sqlite sqlite_unlock_notify' \
+  -ldflags "-X 'forgejo.org/modules/setting.StaticRootPath=/usr/share/forgejo'" \
+  -o forgejo . && sudo cp forgejo /usr/bin/forgejo
+
+# Deploy assets (no rebuild needed)
+sudo cp forgejo/custom/public/assets/viewer*.* /etc/forgejo/public/assets/
+sudo cp forgejo/templates/custom/footer.tmpl /var/lib/forgejo/custom/templates/custom/
+sudo systemctl restart forgejo
+```
+
+Add to `/etc/forgejo/conf/app.ini`:
+
+```ini
+[ifcurl]
+PREVIEW_SERVICE_URL = http://localhost:8000
+```
+
+---
+
+## Browser viewer
+
+A self-contained WebGL IFC viewer (`viewer.html`) built on
+[`@thatopen/components`](https://github.com/ThatOpenCompany/that-open-engine).
+No build step — loads dependencies from CDN.
+
+**Features:**
+
+- Toolbar with raw ifc:// URL input and structured fields (repo, ref, path,
+  selector) — editing any field reloads the model
+- Selector filtering — `IfcWall`, `IfcWall+IfcSlab`, etc.
+- Clipping planes — `✂ clip` button, double-click on model surface to place;
+  drag handles to adjust; planes serialised back into the URL
+- FOV control, camera sync — the URL in the browser bar always reflects the
+  current view and is shareable
+- Drag-and-drop ifc:// URLs onto the page
 
 ---
 
@@ -230,8 +214,30 @@ Remote repositories are cloned as bare repos to the OS cache directory (`~/.cach
 git clone https://github.com/brunopostle/ifcurl
 cd ifcurl
 pip install -e ".[service]"
+
+# Python tests
 python -m pytest tests/
+
+# JavaScript tests (Node 18+)
+node --test tests/test_viewer_url.mjs
+
+# Go tests (requires Forgejo source tree with patch applied)
+cd /path/to/forgejo
+go test ./modules/markup/markdown/ -run TestIfcURL -v
 ```
+
+### Roadmap
+
+| Phase | Status | Description |
+|---|---|---|
+| 1 — Python core | ✓ done | URL parsing, git fetch, render |
+| 2 — Preview service | ✓ done | HTTP service with caching |
+| 3 — Forgejo integration | ✓ done | Go patch, viewer, markdown extension |
+| 4 — Bonsai integration | planned | Protocol handler + "Copy view URL" |
+| 5 — IFC Viewer integration | planned | Plugin for the open-source IFC Viewer |
+| 6 — Federation | planned | `IFCDOCUMENTREFERENCE` cross-repo links |
+
+Development tasks are tracked with [beads](https://github.com/brunopostle/beads): `bd ready`.
 
 ---
 
