@@ -54,8 +54,8 @@ from pydantic import BaseModel
 
 from ifcurl import render as render_mod
 from ifcurl.auth import get_token_for_host
+from ifcurl.bcf import build_bcf
 from ifcurl.git import fetch_ifc
-
 from ifcurl.url import IfcUrl
 
 app = FastAPI(
@@ -89,6 +89,17 @@ def _is_private_ip(host: str) -> bool:
         return addr.is_loopback or addr.is_link_local or addr.is_private or addr.is_reserved
     except ValueError:
         return False
+
+
+def _ssrf_check(ifc_url: IfcUrl) -> None:
+    """Raise HTTPException if the URL fails SSRF protection checks."""
+    if ifc_url.transport == "local":
+        raise HTTPException(status_code=403, detail="Local file transport is not permitted in service mode")
+    if _allowed_hosts is not None:
+        if ifc_url.host not in _allowed_hosts:
+            raise HTTPException(status_code=403, detail=f"Host {ifc_url.host!r} is not in the allowed-hosts list")
+    elif _is_private_ip(ifc_url.host):
+        raise HTTPException(status_code=403, detail="Requests to private/loopback addresses are not permitted")
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +254,13 @@ class PreviewRequest(BaseModel):
     """
 
 
+class BcfRequest(BaseModel):
+    url: str
+    title: str = "IFC View"
+    comment: str = ""
+    token: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -275,13 +293,7 @@ def preview(request: PreviewRequest) -> Response:
         raise HTTPException(status_code=400, detail="URL has no 'path' parameter")
 
     # --- SSRF protection ---
-    if ifc_url.transport == "local":
-        raise HTTPException(status_code=403, detail="Local file transport is not permitted in service mode")
-    if _allowed_hosts is not None:
-        if ifc_url.host not in _allowed_hosts:
-            raise HTTPException(status_code=403, detail=f"Host {ifc_url.host!r} is not in the allowed-hosts list")
-    elif _is_private_ip(ifc_url.host):
-        raise HTTPException(status_code=403, detail="Requests to private/loopback addresses are not permitted")
+    _ssrf_check(ifc_url)
 
     # --- Tier 4 / 4m: cached PNG ---
     if ifc_url.is_mutable_ref():
@@ -382,3 +394,61 @@ def preview(request: PreviewRequest) -> Response:
             media_type="image/png",
             headers={"Cache-Control": "public, max-age=31536000, immutable"},
         )
+
+
+@app.post("/bcf")
+def bcf_export(request: BcfRequest) -> Response:
+    """Generate a BCF 2.1 zip from an ifc:// URL viewpoint.
+
+    Returns ``application/octet-stream`` with a ``.bcf`` zip file containing
+    the camera, clipping planes, and (when a selector is present) the resolved
+    component GUID selection.
+    """
+    try:
+        ifc_url = IfcUrl.parse(request.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if ifc_url.path is None:
+        raise HTTPException(status_code=400, detail="URL has no 'path' parameter")
+
+    _ssrf_check(ifc_url)
+
+    # Resolve selector → component GUIDs when present.
+    guids: list[str] | None = None
+    if ifc_url.selector:
+        token = request.token
+        if token is None and ifc_url.host:
+            token = get_token_for_host(ifc_url.host)
+        try:
+            hexsha, ifc_bytes = fetch_ifc(ifc_url, token=token)
+        except (ImportError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        cached = _t2_get(hexsha, ifc_url.path)
+        ifc_bytes = cached if cached is not None else ifc_bytes
+        if cached is None:
+            _t2_put(hexsha, ifc_url.path, ifc_bytes)
+
+        model = _load_model(ifc_bytes)
+        try:
+            matched = list(ifcopenshell.util.selector.filter_elements(model, ifc_url.selector))
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid selector: {exc}") from exc
+        guids = [e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId]
+
+    bcf_bytes = build_bcf(
+        camera=ifc_url.camera,
+        fov=ifc_url.fov,
+        scale=ifc_url.scale,
+        clips=ifc_url.clips or None,
+        guids=guids,
+        visibility=ifc_url.visibility,
+        title=request.title,
+        comment=request.comment,
+    )
+    return Response(
+        content=bcf_bytes,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="view.bcf"'},
+    )

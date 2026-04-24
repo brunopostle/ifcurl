@@ -50,6 +50,9 @@
     .tb-btn:hover { background: rgba(255,255,255,0.14); }
     .tb-btn.active { color: #a8c8ff; background: rgba(80,120,255,0.2);
                      border-color: rgba(80,120,255,0.5); }
+    /* BCF panel */
+    #bcf-comment { flex: 3; }
+    #bcf-title   { flex: 2; }
     /* Status */
     #status {
       position: fixed; bottom: 12px; left: 50%;
@@ -76,7 +79,8 @@
       "three/addons/":        "https://esm.sh/three@0.177.0/examples/jsm/",
       "web-ifc":              "https://unpkg.com/web-ifc@0.0.75/web-ifc-api.js",
       "@thatopen/fragments":  "https://esm.sh/@thatopen/fragments@3.3.1?external=three,web-ifc",
-      "@thatopen/components": "https://esm.sh/@thatopen/components@3.3.1?external=three,web-ifc,@thatopen/fragments"
+      "@thatopen/components": "https://esm.sh/@thatopen/components@3.3.1?external=three,web-ifc,@thatopen/fragments",
+      "jszip":                "https://esm.sh/jszip@3.10.1"
     }
   }
   </script>
@@ -90,6 +94,7 @@
              spellcheck="false">
       <button id="clip-btn" class="tb-btn" title="Double-click model surface to add clipping plane">✂ clip</button>
       <button id="clip-clear-btn" class="tb-btn" title="Remove all clipping planes" style="display:none">⊗ clips</button>
+      <button id="bcf-btn" class="tb-btn" title="Export current view as a BCF issue">BCF</button>
       <div id="fov-wrap">
         FOV <input id="fov-input" class="ti" type="number" min="10" max="120" step="1"
                    title="Field of view (degrees)">°
@@ -118,6 +123,19 @@
                placeholder="IfcWall" spellcheck="false">
       </div>
     </div>
+    <!-- Row 3: BCF export form (hidden until BCF button clicked) -->
+    <div id="bcf-row" class="trow" style="display:none">
+      <div class="field" style="flex:2">
+        <label>title</label>
+        <input id="bcf-title" class="ti" type="text" placeholder="IFC View" spellcheck="false">
+      </div>
+      <div class="field" style="flex:3">
+        <label>comment</label>
+        <input id="bcf-comment" class="ti" type="text" placeholder="Optional note" spellcheck="false">
+      </div>
+      <button id="bcf-cancel-btn" class="tb-btn">✕</button>
+      <button id="bcf-export-btn" class="tb-btn">Export .bcf</button>
+    </div>
   </div>
   <div id="viewer"></div>
   <div id="status"></div>
@@ -125,6 +143,7 @@
   <script type="module">
     import * as THREE from "three";
     import * as OBC from "@thatopen/components";
+    import JSZip from "jszip";
     import { parseIfcUrl, toRawUrl, buildIfcUrl as _buildIfcUrl } from "./viewer-url.js";
 
     const params   = new URLSearchParams(window.location.search);
@@ -189,7 +208,27 @@
     // Disable camera controls while any input has focus.
     function onInputFocus() { if (cameraControls) cameraControls.enabled = false; }
     function onInputBlur()  { if (cameraControls) cameraControls.enabled = true;  }
-    const allInputs = [urlInput, fovInput, repoInput, refInput, pathInput, selectorInput];
+    const bcfBtn       = document.getElementById("bcf-btn");
+    const bcfRow       = document.getElementById("bcf-row");
+    const bcfTitleIn   = document.getElementById("bcf-title");
+    const bcfCommentIn = document.getElementById("bcf-comment");
+    const bcfCancelBtn = document.getElementById("bcf-cancel-btn");
+    const bcfExportBtn = document.getElementById("bcf-export-btn");
+
+    function bcfPanelOpen(open) {
+      bcfRow.style.display = open ? "" : "none";
+      bcfBtn.classList.toggle("active", open);
+    }
+
+    bcfBtn.addEventListener("click", () => bcfPanelOpen(bcfRow.style.display === "none"));
+    bcfCancelBtn.addEventListener("click", () => bcfPanelOpen(false));
+    bcfExportBtn.addEventListener("click", async () => {
+      await generateBcf(bcfTitleIn.value.trim(), bcfCommentIn.value.trim());
+      bcfPanelOpen(false);
+    });
+
+    const allInputs = [urlInput, fovInput, repoInput, refInput, pathInput, selectorInput,
+                       bcfTitleIn, bcfCommentIn];
     for (const el of allInputs) {
       el.addEventListener("focus",       onInputFocus);
       el.addEventListener("blur",        onInputBlur);
@@ -404,6 +443,111 @@
         fovInput.value = Math.round(camera.fov);
       }
       return true;
+    }
+
+    // -----------------------------------------------------------------------
+    // BCF 2.1 export — build zip client-side and trigger download.
+    // -----------------------------------------------------------------------
+    async function generateBcf(title, comment) {
+      if (threeCamera) syncCameraUrl(threeCamera);
+      const src = urlInput.value.trim();
+      if (!src) return;
+
+      const qIdx = src.indexOf("?");
+      const qs   = new URLSearchParams(qIdx < 0 ? "" : src.slice(qIdx + 1));
+
+      const camV  = (qs.get("camera") ?? "").split(",").map(Number);
+      const cam   = camV.length === 9 && !camV.some(isNaN) ? camV : null;
+      const fov   = cam ? (parseFloat(qs.get("fov")) || null) : null;
+      const scale = cam ? (parseFloat(qs.get("scale")) || null) : null;
+      const clips = qs.getAll("clip")
+        .map(s => s.split(",").map(Number))
+        .filter(v => v.length === 6 && !v.some(isNaN));
+      const selector = qs.get("selector") || "";
+
+      const topicGuid = crypto.randomUUID();
+      const vpGuid    = cam ? crypto.randomUUID() : null;
+      const now       = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+
+      function esc(s) {
+        return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
+                        .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+      }
+      function xyz(tag, a, b, c) {
+        return `<${tag}><X>${a}</X><Y>${b}</Y><Z>${c}</Z></${tag}>`;
+      }
+
+      const versionXml = `<?xml version="1.0" encoding="utf-8"?>
+<Version VersionId="2.1" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/buildingSMART/BCF-XML/release_2_1/Schemas/version.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <DetailedVersion>2.1</DetailedVersion>
+</Version>`;
+
+      let viewpointXml = null;
+      if (vpGuid && cam) {
+        const [px,py,pz, dx,dy,dz, ux,uy,uz] = cam;
+        const camXml = fov != null
+          ? `<PerspectiveCamera>
+    ${xyz("CameraViewPoint",px,py,pz)}
+    ${xyz("CameraDirection",dx,dy,dz)}
+    ${xyz("CameraUpVector",ux,uy,uz)}
+    <FieldOfView>${fov}</FieldOfView>
+  </PerspectiveCamera>`
+          : scale != null
+          ? `<OrthogonalCamera>
+    ${xyz("CameraViewPoint",px,py,pz)}
+    ${xyz("CameraDirection",dx,dy,dz)}
+    ${xyz("CameraUpVector",ux,uy,uz)}
+    <ViewToWorldScale>${scale}</ViewToWorldScale>
+  </OrthogonalCamera>`
+          : "";
+        const clipsXml = clips.length
+          ? `<ClippingPlanes>
+    ${clips.map(([cx,cy,cz,nx,ny,nz]) =>
+        `<ClippingPlane>${xyz("Location",cx,cy,cz)}${xyz("Direction",nx,ny,nz)}</ClippingPlane>`
+      ).join("\n    ")}
+  </ClippingPlanes>` : "";
+        viewpointXml = `<?xml version="1.0" encoding="utf-8"?>
+<VisualizationInfo Guid="${vpGuid}">
+  <Components><Visibility DefaultVisibility="true"/></Components>
+  ${camXml}
+  ${clipsXml}
+</VisualizationInfo>`;
+      }
+
+      const desc = selector
+        ? `${esc(src)}\nselector: ${esc(selector)}`
+        : esc(src);
+      const vpEntry  = vpGuid ? `<Viewpoints Guid="${vpGuid}"><Viewpoint>viewpoint.bcfv</Viewpoint></Viewpoints>` : "";
+      const cmtEntry = comment
+        ? `<Comment Guid="${crypto.randomUUID()}">
+    <Date>${now}</Date><Author>anonymous</Author>
+    <Comment>${esc(comment)}</Comment>
+    ${vpGuid ? `<Viewpoint Guid="${vpGuid}"/>` : ""}
+  </Comment>` : "";
+
+      const markupXml = `<?xml version="1.0" encoding="utf-8"?>
+<Markup>
+  <Topic Guid="${topicGuid}" TopicType="Coordination" TopicStatus="Open">
+    <Title>${esc(title || "IFC View")}</Title>
+    <Description>${desc}</Description>
+    <CreationDate>${now}</CreationDate>
+    <CreationAuthor>anonymous</CreationAuthor>
+    ${vpEntry}
+  </Topic>
+  ${cmtEntry}
+</Markup>`;
+
+      const zip = new JSZip();
+      zip.file("bcf.version", versionXml);
+      zip.folder(topicGuid).file("markup.bcf", markupXml);
+      if (vpGuid && viewpointXml) zip.folder(topicGuid).file("viewpoint.bcfv", viewpointXml);
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "view.bcf";
+      a.click();
+      URL.revokeObjectURL(a.href);
     }
 
     // -----------------------------------------------------------------------
