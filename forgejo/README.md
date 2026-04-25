@@ -1,14 +1,32 @@
 # Forgejo integration
 
-This directory contains the Forgejo source patch and custom assets for the
-ifcurl preview extension. The integration adds:
+This directory contains assets for the ifcurl preview extension.  The features
+split into two tiers by what infrastructure they require.
 
-- **Markdown preview** — ifc:// URLs in markdown render as inline `<figure>`
-  preview images fetched from the ifcurl preview service.
-- **"View in 3D" button** — appears on `.ifc` file view pages alongside Raw /
-  Permalink / History.
-- **Browser viewer** — a self-contained WebGL IFC viewer served as a Forgejo
-  custom asset.
+## Feature overview
+
+| Feature | What it needs | Forgejo rebuild? |
+|---|---|---|
+| "View in 3D" button on file/history pages | ifcurl service + `footer.tmpl` | No |
+| Browser IFC viewer | `viewer.html` static asset | No |
+| PR diff 3D render | ifcurl service + `footer.tmpl` + **Nginx proxy** | No |
+| ifc:// links in markdown → inline preview | Go patch + `PREVIEW_SERVICE_URL` in app.ini | **Yes** |
+
+The first three features are implemented entirely as static assets (`footer.tmpl`,
+`viewer.html`).  They survive Forgejo upgrades without touching the Go patch and
+require no Forgejo rebuild.
+
+The Go patch is needed **only** for rendering ifc:// links that appear in
+markdown (issue bodies, comments, wiki).  Minimising the patch surface is
+deliberate — every line of Go code must be re-verified against each Forgejo
+release.
+
+The PR diff feature requires a **reverse proxy** (e.g. Nginx) to expose the
+ifcurl service at the same origin as Forgejo.  This is because the diff image is
+fetched by the browser (not by Forgejo's server), and browsers block cross-origin
+image requests to plain `http://localhost` URLs.  Most production Forgejo
+deployments already sit behind Nginx for TLS termination; adding two
+`proxy_pass` lines is the only extra step.
 
 ---
 
@@ -24,7 +42,7 @@ forgejo/
     viewer.html                         ← browser IFC viewer (no rebuild needed)
     viewer-url.js                       ← viewer URL logic module
   templates/custom/
-    footer.tmpl                         ← "View in 3D" button injection
+    footer.tmpl                         ← "View in 3D" + PR diff injection (no rebuild needed)
   server-config/
     ifcurl-preview.service              ← systemd unit for the preview service
     gitconfig-ifcmerge                  ← git merge driver registration for /etc/gitconfig
@@ -35,9 +53,10 @@ forgejo/
 
 ## Prerequisites
 
-- Forgejo source tree cloned and building cleanly
-- `go` 1.21+ in PATH
 - ifcurl preview service running and reachable from the Forgejo server
+- Nginx (or equivalent) in front of Forgejo if PR diff images are wanted
+- Forgejo source tree cloned and building cleanly (`go` 1.21+) — **only if**
+  markdown inline preview is wanted
 
 The patch was written against the `v13.0` branch of Forgejo. Check which
 Forgejo commit the patch was authored against with:
