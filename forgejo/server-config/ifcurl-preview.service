@@ -38,9 +38,9 @@ RestartSec=5
 # setuid binaries or capabilities.
 #
 # SystemCallFilter: allow the syscalls a Python/C-extension process needs
-# (@system-service covers the common POSIX set; @process covers fork/clone
-# which ifcopenshell's geometry iterator requires).  execve/execveat are NOT
-# in either set, so an attacker with code execution cannot exec a shell.
+# (@system-service covers the common POSIX set including execve via @default;
+# @process adds fork/clone for ifcopenshell's geometry iterator).  execve is
+# permitted because the main process needs it for git CLI calls (GitPython).
 # The filter applies to child processes too (inherited across fork).
 #
 # RestrictAddressFamilies: the service only needs TCP/UDP to reach git hosts.
