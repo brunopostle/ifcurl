@@ -167,15 +167,19 @@ These files can be updated at any time without recompiling Forgejo.
 ### Viewer and URL logic
 
 ```bash
-sudo cp forgejo/custom/public/assets/viewer.html          /etc/forgejo/public/assets/
-sudo cp forgejo/custom/public/assets/viewer-url.js        /etc/forgejo/public/assets/
-sudo cp forgejo/custom/public/assets/viewer-deps.js       /etc/forgejo/public/assets/
-sudo cp forgejo/custom/public/assets/fragments-worker.js  /etc/forgejo/public/assets/
-sudo cp forgejo/custom/public/assets/web-ifc.wasm         /etc/forgejo/public/assets/
-sudo cp forgejo/custom/public/assets/web-ifc-mt.wasm      /etc/forgejo/public/assets/
+sudo mkdir -p /var/lib/forgejo/custom/public/assets/
+sudo cp forgejo/custom/public/assets/viewer.html          /var/lib/forgejo/custom/public/assets/
+sudo cp forgejo/custom/public/assets/viewer-url.js        /var/lib/forgejo/custom/public/assets/
+sudo cp forgejo/custom/public/assets/viewer-deps.js       /var/lib/forgejo/custom/public/assets/
+sudo cp forgejo/custom/public/assets/fragments-worker.js  /var/lib/forgejo/custom/public/assets/
+sudo cp forgejo/custom/public/assets/web-ifc.wasm         /var/lib/forgejo/custom/public/assets/
+sudo cp forgejo/custom/public/assets/web-ifc-mt.wasm      /var/lib/forgejo/custom/public/assets/
 ```
 
 Served at `/assets/viewer.html`, `/assets/viewer-deps.js`, etc.
+
+Note: the correct CustomPath is `/var/lib/forgejo/custom` (Forgejo's default when `FORGEJO_CUSTOM` is
+not set). Do not use `/etc/forgejo/public/assets/` — Forgejo does not serve from there.
 
 ### "View in 3D" footer template
 
