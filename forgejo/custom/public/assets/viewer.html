@@ -77,6 +77,35 @@
       background: rgba(28,28,30,0.7);
       pointer-events: none;
     }
+    /* Model metadata panel */
+    #meta-panel {
+      position: fixed; bottom: 44px; left: 12px; z-index: 10;
+      background: rgba(28,28,30,0.92); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+      padding: 8px 10px; min-width: 180px; max-width: 260px;
+      max-height: calc(100vh - 130px); overflow-y: auto;
+    }
+    #meta-panel h3 {
+      font-size: 10px; color: #606068;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-top: 10px; margin-bottom: 3px;
+    }
+    #meta-panel h3:first-child { margin-top: 0; }
+    .meta-row {
+      display: flex; align-items: baseline; gap: 4px;
+      margin-top: 2px; padding: 1px 3px; border-radius: 3px;
+    }
+    .meta-row.storey-row { cursor: pointer; }
+    .meta-row.storey-row:hover { background: rgba(255,255,255,0.07); }
+    .meta-row.storey-row.active { background: rgba(80,120,255,0.2);
+                                   color: #a8c8ff; }
+    .meta-name {
+      font-size: 11px; color: #d0d0d8; font-family: monospace;
+      flex: 1; min-width: 0; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .meta-row.storey-row.active .meta-name { color: #a8c8ff; }
+    .meta-count { font-size: 10px; color: #808088; flex-shrink: 0; }
     /* Element properties panel */
     #props-panel {
       position: fixed; bottom: 44px; right: 12px; z-index: 10;
@@ -113,6 +142,7 @@
              spellcheck="false">
       <button id="clip-btn" class="tb-btn" title="Double-click model surface to add clipping plane">✂ clip</button>
       <button id="clip-clear-btn" class="tb-btn" title="Remove all clipping planes" style="display:none">⊗ clips</button>
+      <button id="meta-btn" class="tb-btn" title="Model overview: types and storeys">☰</button>
       <button id="bcf-btn" class="tb-btn" title="Export current view as a BCF issue">BCF</button>
       <button id="copy-url-btn" class="tb-btn" title="Copy ifc:// URL to clipboard">⎘</button>
       <button id="new-issue-btn" class="tb-btn" title="Open new issue with this view URL">Issue</button>
@@ -165,6 +195,7 @@
     </div>
   </div>
   <div id="viewer"></div>
+  <div id="meta-panel" style="display:none"></div>
   <div id="status"></div>
   <div id="props-panel" style="display:none">
     <div id="props-panel-header">
@@ -283,6 +314,14 @@
     // Disable camera controls while any input has focus.
     function onInputFocus() { if (cameraControls) cameraControls.enabled = false; }
     function onInputBlur()  { if (cameraControls) cameraControls.enabled = true;  }
+    const metaBtn   = document.getElementById("meta-btn");
+    const metaPanel = document.getElementById("meta-panel");
+    metaBtn.addEventListener("click", () => {
+      const open = metaPanel.style.display === "none";
+      metaPanel.style.display = open ? "" : "none";
+      metaBtn.classList.toggle("active", open);
+    });
+
     const bcfBtn        = document.getElementById("bcf-btn");
     const bcfRow        = document.getElementById("bcf-row");
     const bcfTitleIn    = document.getElementById("bcf-title");
@@ -834,6 +873,84 @@
     }
 
     // -----------------------------------------------------------------------
+    // Model metadata panel population.
+    // -----------------------------------------------------------------------
+    async function populateMetaPanel(components) {
+      const classifier = components.get(OBC.Classifier);
+      const hider      = components.get(OBC.Hider);
+
+      // --- Type breakdown ---
+      await classifier.byCategory();
+      const categories = classifier.list.get("Categories");
+      const types = [];
+      if (categories) {
+        for (const [name, groupData] of categories) {
+          let count = 0;
+          for (const ids of Object.values(groupData.map)) count += ids.length;
+          if (count > 0) types.push({ name, count });
+        }
+        types.sort((a, b) => b.count - a.count);
+      }
+
+      // --- Storey list ---
+      await classifier.byIfcBuildingStorey();
+      const storeyGroups = classifier.list.get("Storeys");
+      const storeyNames = storeyGroups ? [...storeyGroups.keys()] : [];
+
+      // --- Render ---
+      const html = [];
+
+      if (types.length) {
+        html.push("<h3>Types</h3>");
+        for (const { name, count } of types) {
+          html.push(
+            `<div class="meta-row">` +
+            `<span class="meta-name">${name}</span>` +
+            `<span class="meta-count">${count}</span>` +
+            `</div>`
+          );
+        }
+      }
+
+      if (storeyNames.length) {
+        html.push("<h3>Storeys</h3>");
+        for (const name of storeyNames) {
+          html.push(
+            `<div class="meta-row storey-row" data-storey="${name.replace(/"/g, "&quot;")}">` +
+            `<span class="meta-name">${name}</span>` +
+            `</div>`
+          );
+        }
+      }
+
+      if (!types.length && !storeyNames.length) {
+        html.push('<div class="meta-row"><span class="meta-name" style="color:#505058">No metadata</span></div>');
+      }
+
+      metaPanel.innerHTML = html.join("");
+
+      // Wire up storey click-to-isolate.
+      let activeRow = null;
+      for (const row of metaPanel.querySelectorAll(".storey-row")) {
+        row.addEventListener("click", async () => {
+          const name = row.dataset.storey;
+          if (activeRow === row) {
+            // Toggle off: show all.
+            activeRow = null;
+            row.classList.remove("active");
+            await hider.set(true);
+          } else {
+            activeRow?.classList.remove("active");
+            activeRow = row;
+            row.classList.add("active");
+            const found = await classifier.find({ Storeys: [name] });
+            await hider.isolate(found);
+          }
+        });
+      }
+    }
+
+    // -----------------------------------------------------------------------
     // Commit-pin indicator helpers.
     // -----------------------------------------------------------------------
     function isCommitHash(ref) {
@@ -988,6 +1105,10 @@
 
         syncCameraUrl(threeCamera);
         cameraControls.addEventListener("rest", () => syncCameraUrl(threeCamera));
+
+        populateMetaPanel(components).catch(err => {
+          console.warn("Metadata panel unavailable:", err.message);
+        });
 
         statusEl.textContent = "";
       } catch (err) {
