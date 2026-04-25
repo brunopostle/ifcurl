@@ -18,31 +18,36 @@ def _local_url(repo_path: str, ref: str = "HEAD", path: str = "model.ifc") -> If
 class TestFetchIfc:
     def test_returns_hexsha_and_bytes(self, local_ifc_repo):
         url = _local_url(local_ifc_repo["path"])
-        hexsha, data = fetch_ifc(url)
+        hexsha, data, _ = fetch_ifc(url)
         assert len(hexsha) == 40
         assert all(c in "0123456789abcdef" for c in hexsha)
         assert isinstance(data, bytes)
         assert len(data) > 0
 
+    def test_local_repo_never_stale(self, local_ifc_repo):
+        url = _local_url(local_ifc_repo["path"])
+        _, _, is_stale = fetch_ifc(url)
+        assert is_stale is False
+
     def test_hexsha_matches_commit(self, local_ifc_repo):
         url = _local_url(local_ifc_repo["path"])
-        hexsha, _ = fetch_ifc(url)
+        hexsha, _, _ = fetch_ifc(url)
         assert hexsha == local_ifc_repo["hexsha"]
 
     def test_bytes_match_committed_file(self, local_ifc_repo):
         url = _local_url(local_ifc_repo["path"])
-        _, data = fetch_ifc(url)
+        _, data, _ = fetch_ifc(url)
         assert data == local_ifc_repo["bytes"]
 
     def test_explicit_commit_hash_ref(self, local_ifc_repo):
         url = _local_url(local_ifc_repo["path"], ref=local_ifc_repo["hexsha"])
-        hexsha, data = fetch_ifc(url)
+        hexsha, data, _ = fetch_ifc(url)
         assert hexsha == local_ifc_repo["hexsha"]
         assert data == local_ifc_repo["bytes"]
 
     def test_tag_ref(self, local_ifc_repo):
         url = _local_url(local_ifc_repo["path"], ref="tags/v1.0")
-        hexsha, data = fetch_ifc(url)
+        hexsha, data, _ = fetch_ifc(url)
         assert hexsha == local_ifc_repo["hexsha"]
 
     def test_branch_ref(self, local_ifc_repo):
@@ -50,7 +55,7 @@ class TestFetchIfc:
 
         branch = gitpkg.Repo(local_ifc_repo["path"]).active_branch.name
         url = _local_url(local_ifc_repo["path"], ref=f"heads/{branch}")
-        hexsha, data = fetch_ifc(url)
+        hexsha, data, _ = fetch_ifc(url)
         assert hexsha == local_ifc_repo["hexsha"]
         assert data == local_ifc_repo["bytes"]
 
@@ -85,7 +90,7 @@ class TestFetchIfcBytes:
 
     def test_backwards_compat_with_fetch_ifc(self, local_ifc_repo):
         url = _local_url(local_ifc_repo["path"])
-        _, expected = fetch_ifc(url)
+        _, expected, _ = fetch_ifc(url)
         assert fetch_ifc_bytes(url) == expected
 
 

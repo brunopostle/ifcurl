@@ -206,7 +206,7 @@ class TestBcfEndpoint:
         ifc_bytes = model_with_geometry.to_string().encode()
 
         def mock_fetch(ifc_url, token=None):
-            return FAKE_HEXSHA, ifc_bytes
+            return FAKE_HEXSHA, ifc_bytes, False
 
         selector_url = MUTABLE_URL.replace(
             "?path=model.ifc", "?path=model.ifc&selector=IfcWall"

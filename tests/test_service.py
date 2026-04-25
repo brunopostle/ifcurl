@@ -64,7 +64,7 @@ def tmp_t4_cache(tmp_path):
 
 
 def _mock_fetch(ifc_bytes: bytes):
-    return lambda ifc_url, token=None: (FAKE_HEXSHA, ifc_bytes)
+    return lambda ifc_url, token=None: (FAKE_HEXSHA, ifc_bytes, False)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ class TestTier2Cache:
         def counting_fetch(ifc_url, token=None):
             nonlocal call_count
             call_count += 1
-            return FAKE_HEXSHA, ifc_bytes
+            return FAKE_HEXSHA, ifc_bytes, False
 
         # Disable tier-4m so both requests reach fetch_ifc, letting us
         # verify that tier-2 serves ifc_bytes from cache on the second call.
@@ -305,7 +305,7 @@ class TestAuthentication:
 
         def capturing_fetch(ifc_url, token=None):
             received_token.append(token)
-            return FAKE_HEXSHA, ifc_bytes
+            return FAKE_HEXSHA, ifc_bytes, False
 
         with (
             patch("ifcurl.service.fetch_ifc", capturing_fetch),
@@ -323,7 +323,7 @@ class TestAuthentication:
 
         def capturing_fetch(ifc_url, token=None):
             received_token.append(token)
-            return FAKE_HEXSHA, ifc_bytes
+            return FAKE_HEXSHA, ifc_bytes, False
 
         monkeypatch.setattr(
             "ifcurl.service.get_token_for_host", lambda host: "config_token"
@@ -344,7 +344,7 @@ class TestAuthentication:
 
         def capturing_fetch(ifc_url, token=None):
             received_token.append(token)
-            return FAKE_HEXSHA, ifc_bytes
+            return FAKE_HEXSHA, ifc_bytes, False
 
         monkeypatch.setattr(
             "ifcurl.service.get_token_for_host", lambda host: "config_token"
@@ -389,7 +389,7 @@ class TestGetEndpoint:
 
         def mock_fetch(ifc_url, token=None):
             received["token"] = token
-            return FAKE_HEXSHA, ifc_bytes
+            return FAKE_HEXSHA, ifc_bytes, False
 
         with (
             patch("ifcurl.service.fetch_ifc", mock_fetch),

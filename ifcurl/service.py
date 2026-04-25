@@ -415,7 +415,7 @@ def preview(request: PreviewRequest) -> Response:
 
     # --- Fetch IFC bytes + commit hexsha ---
     try:
-        hexsha, ifc_bytes = fetch_ifc(ifc_url, token=token)
+        hexsha, ifc_bytes, is_stale = fetch_ifc(ifc_url, token=token)
     except ImportError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -470,19 +470,23 @@ def preview(request: PreviewRequest) -> Response:
         _t3_put(hexsha, ifc_url.path, ifc_url.selector, new_guids)
 
     # --- Tier 4 / 4m: store PNG and return with appropriate cache headers ---
+    extra_headers = {"X-Ifcurl-Cache": "stale"} if is_stale else {}
     if ifc_url.is_mutable_ref():
         _t4m_put(request.url, png_bytes)
         return Response(
             content=png_bytes,
             media_type="image/png",
-            headers={"Cache-Control": f"public, max-age={_T4M_TTL}"},
+            headers={"Cache-Control": f"public, max-age={_T4M_TTL}", **extra_headers},
         )
     else:
         _t4_put(request.url, png_bytes)
         return Response(
             content=png_bytes,
             media_type="image/png",
-            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                **extra_headers,
+            },
         )
 
 
@@ -511,7 +515,7 @@ def bcf_export(request: BcfRequest) -> Response:
         if token is None and ifc_url.host:
             token = get_token_for_host(ifc_url.host)
         try:
-            hexsha, ifc_bytes = fetch_ifc(ifc_url, token=token)
+            hexsha, ifc_bytes, _ = fetch_ifc(ifc_url, token=token)
         except (ImportError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -614,8 +618,8 @@ def render_diff(request: DiffRequest) -> Response:
 
     # --- Fetch IFC bytes for both commits ---
     try:
-        base_hexsha, base_bytes = fetch_ifc(base_url, token=token)
-        head_hexsha, head_bytes = fetch_ifc(head_url, token=token)
+        base_hexsha, base_bytes, base_stale = fetch_ifc(base_url, token=token)
+        head_hexsha, head_bytes, head_stale = fetch_ifc(head_url, token=token)
     except ImportError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -667,16 +671,22 @@ def render_diff(request: DiffRequest) -> Response:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # --- Tier 4: cache and return ---
+    diff_stale_headers = (
+        {"X-Ifcurl-Cache": "stale"} if (base_stale or head_stale) else {}
+    )
     if both_immutable:
         _t4_put(cache_key, png_bytes)
         return Response(
             content=png_bytes,
             media_type="image/png",
-            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                **diff_stale_headers,
+            },
         )
 
     return Response(
         content=png_bytes,
         media_type="image/png",
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store", **diff_stale_headers},
     )

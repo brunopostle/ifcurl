@@ -35,9 +35,12 @@ from __future__ import annotations
 import hashlib
 
 # allows git import even if git executable isn't found during import
+import logging
 import os
 import shutil
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 from platformdirs import user_cache_dir
 
@@ -53,11 +56,15 @@ except ImportError:
 from ifcurl.url import IfcUrl
 
 
-def fetch_ifc(ifc_url: IfcUrl, token: str | None = None) -> tuple[str, bytes]:
-    """Return ``(commit_hexsha, ifc_bytes)`` for the file addressed by *ifc_url*.
+def fetch_ifc(ifc_url: IfcUrl, token: str | None = None) -> tuple[str, bytes, bool]:
+    """Return ``(commit_hexsha, ifc_bytes, is_stale)`` for the file addressed by *ifc_url*.
 
     The commit hexsha is the resolved, immutable identifier for the ref —
     useful as a cache key even when the URL uses a mutable ref like a branch.
+
+    *is_stale* is ``True`` when the URL uses a mutable ref (branch/HEAD) and
+    the remote fetch failed — the returned bytes come from the local cache and
+    may not reflect the latest commit.  A warning is logged in this case.
 
     :param ifc_url: A parsed :class:`IfcUrl`.
     :param token: Optional bearer token for HTTPS authentication.  Injected
@@ -73,8 +80,9 @@ def fetch_ifc(ifc_url: IfcUrl, token: str | None = None) -> tuple[str, bytes]:
     if ifc_url.path is None:
         raise ValueError("URL has no 'path' parameter — cannot fetch IFC file")
 
-    repo = _get_repo(ifc_url, token=token)
-    return _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
+    repo, is_stale = _get_repo(ifc_url, token=token)
+    hexsha, data = _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
+    return hexsha, data, is_stale
 
 
 def diff_text(base_url: IfcUrl, head_url: IfcUrl, token: str | None = None) -> str:
@@ -125,7 +133,7 @@ def fetch_ifc_bytes(ifc_url: IfcUrl, token: str | None = None) -> bytes:
     :raises ValueError: If ``ifc_url.path`` is unset, the repo cannot be
         reached, or the file is not found at the specified ref.
     """
-    _, data = fetch_ifc(ifc_url, token=token)
+    _, data, _ = fetch_ifc(ifc_url, token=token)
     return data
 
 
@@ -134,10 +142,10 @@ def fetch_ifc_bytes(ifc_url: IfcUrl, token: str | None = None) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def _get_repo(ifc_url: IfcUrl, token: str | None = None) -> git.Repo:
-    """Open or fetch the repository for *ifc_url*."""
+def _get_repo(ifc_url: IfcUrl, token: str | None = None) -> tuple[git.Repo, bool]:
+    """Open or fetch the repository for *ifc_url*.  Returns ``(repo, is_stale)``."""
     if ifc_url.transport == "local":
-        return _open_local(ifc_url.repo_path)
+        return _open_local(ifc_url.repo_path), False
     return _open_remote(ifc_url.git_remote_url(), ifc_url.is_mutable_ref(), token=token)
 
 
@@ -272,12 +280,16 @@ def _clone_bare(auth_url: str, git_dir: Path, remote_url: str) -> git.Repo:
 
 def _open_remote(
     remote_url: str, is_mutable: bool, token: str | None = None
-) -> git.Repo:
-    """Return a GitPython Repo for *remote_url*, cloning it if necessary.
+) -> tuple[git.Repo, bool]:
+    """Return ``(repo, is_stale)`` for *remote_url*, cloning if necessary.
 
     Bare clones are stored under the OS cache dir keyed on the clean URL.
     For mutable refs (branches, HEAD) the remote is fetched on every call.
     Immutable refs (commit hashes, tags) skip the fetch.
+
+    *is_stale* is ``True`` when a mutable-ref fetch was attempted but all
+    network attempts failed — the caller receives cached data that may be
+    outdated.  A warning is logged in this case.
 
     If *token* is provided it is injected into the URL for clone and fetch
     operations but is never written to the on-disk git config.
@@ -288,6 +300,7 @@ def _open_remote(
     cache_dir = _cache_dir_for(remote_url)
     git_dir = cache_dir / "repo.git"
     auth = _auth_url(remote_url, token)
+    is_stale = False
 
     if not git_dir.exists():
         repo = _clone_bare(auth, git_dir, remote_url)
@@ -296,6 +309,7 @@ def _open_remote(
     else:
         repo = git.Repo(str(git_dir))
         if is_mutable:
+            fetch_ok = False
             try:
                 if auth != remote_url:
                     # Fetch directly from the authenticated URL so the token
@@ -304,20 +318,29 @@ def _open_remote(
                     fallback = _http_fallback(auth)
                     try:
                         repo.git.fetch(fetch_url, "+refs/*:refs/*")
+                        fetch_ok = True
                     except git.exc.GitCommandError:
                         if fallback:
                             try:
                                 repo.git.fetch(fallback, "+refs/*:refs/*")
+                                fetch_ok = True
                             except git.exc.GitCommandError:
                                 pass
                 else:
                     repo.git.fetch("origin")
+                    fetch_ok = True
             except git.exc.GitCommandError:
-                pass  # offline — use cached data
+                pass  # offline — fall through to stale check
+
+            if not fetch_ok:
+                is_stale = True
+                _logger.warning(
+                    "fetch failed for %r — serving stale cached data", remote_url
+                )
             _evict_if_needed()
 
     _touch_cache(cache_dir)
-    return repo
+    return repo, is_stale
 
 
 def _read_commit_blob(
