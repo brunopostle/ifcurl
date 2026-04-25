@@ -6,11 +6,12 @@
     "build": "node build.js"
   },
   "dependencies": {
-    "@thatopen/components": "3.3.1",
-    "@thatopen/fragments": "3.3.1",
+    "@thatopen/components": "3.4.2",
+    "@thatopen/fragments": "3.4.3",
+    "camera-controls": "3.1.2",
     "jszip": "3.10.1",
-    "three": "0.177.0",
-    "web-ifc": "0.0.75"
+    "three": "0.184.0",
+    "web-ifc": "0.0.77"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"
