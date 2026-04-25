@@ -178,3 +178,112 @@ class TestCacheHelpers:
         entry = _make_fake_repo_cache(tmp_path, "https://example.com/repo")
         _evict_if_needed()
         assert entry.exists()
+
+
+# ---------------------------------------------------------------------------
+# Cache CLI (_cmd_cache)
+# ---------------------------------------------------------------------------
+
+
+import argparse
+import types
+
+
+def _cache_args(**kwargs) -> argparse.Namespace:
+    defaults = {"cache_cmd": None, "max_gb": None}
+    defaults.update(kwargs)
+    return argparse.Namespace(**defaults)
+
+
+class TestCacheCli:
+    def _patch(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("ifcurl.git.user_cache_dir", lambda *a, **kw: str(tmp_path))
+        monkeypatch.setattr("ifcurl.__main__.user_cache_dir", lambda *a, **kw: str(tmp_path), raising=False)
+
+    def test_list_empty(self, tmp_path, monkeypatch, capsys):
+        self._patch(monkeypatch, tmp_path)
+        from ifcurl.__main__ import _cmd_cache
+        _cmd_cache(_cache_args(cache_cmd="list"))
+        out = capsys.readouterr().out
+        assert "No cached repositories" in out
+
+    def test_list_default_subcommand(self, tmp_path, monkeypatch, capsys):
+        self._patch(monkeypatch, tmp_path)
+        _make_fake_repo_cache(tmp_path, "https://example.com/org/repo", size_bytes=2048)
+        from ifcurl.__main__ import _cmd_cache
+        _cmd_cache(_cache_args(cache_cmd=None))
+        out = capsys.readouterr().out
+        assert "https://example.com/org/repo" in out
+        assert "Total:" in out
+
+    def test_list_shows_entries_and_total(self, tmp_path, monkeypatch, capsys):
+        self._patch(monkeypatch, tmp_path)
+        monkeypatch.delenv("IFCURL_CACHE_MAX_GB", raising=False)
+        _make_fake_repo_cache(tmp_path, "https://example.com/a", size_bytes=1024 * 1024)
+        _make_fake_repo_cache(tmp_path, "https://example.com/b", size_bytes=1024 * 1024)
+        from ifcurl.__main__ import _cmd_cache
+        _cmd_cache(_cache_args(cache_cmd="list"))
+        out = capsys.readouterr().out
+        assert "https://example.com/a" in out
+        assert "https://example.com/b" in out
+        assert "2 repos" in out
+
+    def test_list_shows_limit_when_env_set(self, tmp_path, monkeypatch, capsys):
+        self._patch(monkeypatch, tmp_path)
+        monkeypatch.setenv("IFCURL_CACHE_MAX_GB", "5.0")
+        _make_fake_repo_cache(tmp_path, "https://example.com/a", size_bytes=1024)
+        from ifcurl.__main__ import _cmd_cache
+        _cmd_cache(_cache_args(cache_cmd="list"))
+        out = capsys.readouterr().out
+        assert "limit:" in out
+        assert "5.0 GB" in out
+
+    def test_clear_removes_all(self, tmp_path, monkeypatch, capsys):
+        self._patch(monkeypatch, tmp_path)
+        e1 = _make_fake_repo_cache(tmp_path, "https://example.com/a")
+        e2 = _make_fake_repo_cache(tmp_path, "https://example.com/b")
+        from ifcurl.__main__ import _cmd_cache
+        _cmd_cache(_cache_args(cache_cmd="clear"))
+        assert not e1.exists()
+        assert not e2.exists()
+        out = capsys.readouterr().out
+        assert "Cleared" in out
+        assert "2 repos" in out
+
+    def test_clear_empty(self, tmp_path, monkeypatch, capsys):
+        self._patch(monkeypatch, tmp_path)
+        from ifcurl.__main__ import _cmd_cache
+        _cmd_cache(_cache_args(cache_cmd="clear"))
+        out = capsys.readouterr().out
+        assert "Nothing to clear" in out
+
+    def test_prune_with_max_gb_arg(self, tmp_path, monkeypatch, capsys):
+        self._patch(monkeypatch, tmp_path)
+        monkeypatch.delenv("IFCURL_CACHE_MAX_GB", raising=False)
+        # Two 1 MB entries; limit to 0.5 MB so both are evicted
+        e1 = _make_fake_repo_cache(tmp_path, "https://example.com/old", size_bytes=1024 * 1024)
+        time.sleep(0.05)
+        e2 = _make_fake_repo_cache(tmp_path, "https://example.com/new", size_bytes=1024 * 1024)
+        from ifcurl.__main__ import _cmd_cache
+        _cmd_cache(_cache_args(cache_cmd="prune", max_gb=0.0000005))
+        out = capsys.readouterr().out
+        assert "Freed" in out
+        assert "remaining" in out
+
+    def test_prune_no_max_gb_and_no_env_exits(self, tmp_path, monkeypatch, capsys):
+        self._patch(monkeypatch, tmp_path)
+        monkeypatch.delenv("IFCURL_CACHE_MAX_GB", raising=False)
+        from ifcurl.__main__ import _cmd_cache
+        with pytest.raises(SystemExit):
+            _cmd_cache(_cache_args(cache_cmd="prune", max_gb=None))
+        err = capsys.readouterr().err
+        assert "required" in err
+
+    def test_prune_uses_env_when_no_arg(self, tmp_path, monkeypatch, capsys):
+        self._patch(monkeypatch, tmp_path)
+        monkeypatch.setenv("IFCURL_CACHE_MAX_GB", "0.0000005")
+        _make_fake_repo_cache(tmp_path, "https://example.com/repo", size_bytes=1024 * 1024)
+        from ifcurl.__main__ import _cmd_cache
+        _cmd_cache(_cache_args(cache_cmd="prune", max_gb=None))
+        out = capsys.readouterr().out
+        assert "Freed" in out
