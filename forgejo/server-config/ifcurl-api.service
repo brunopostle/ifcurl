@@ -11,10 +11,10 @@ Group=ifcurl
 EnvironmentFile=-/etc/ifcurl/env
 # Tell the API service where to find the render service Unix socket
 Environment=IFCURL_RENDER_SOCKET=/run/ifcurl/render.sock
-ExecStart=/usr/local/bin/ifcurl serve \
+ExecStart=/opt/ifcurl/bin/ifcurl serve \
     --host 127.0.0.1 \
     --port 8000 \
-    --allowed-hosts git.example.com
+    --allowed-hosts localhost
 Restart=on-failure
 RestartSec=5
 
@@ -32,6 +32,7 @@ RestartSec=5
 # a Unix socket, so this service never loads ifcopenshell or pyvista.
 # ---------------------------------------------------------------------------
 Environment=XDG_CACHE_HOME=/var/cache
+Environment=MPLCONFIGDIR=/var/cache/ifcurl
 CacheDirectory=ifcurl
 NoNewPrivileges=yes
 RestrictSUIDSGID=yes

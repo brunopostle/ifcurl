@@ -269,6 +269,8 @@ def _clone_bare(auth_url: str, git_dir: Path, remote_url: str) -> git.Repo:
     except git.exc.GitCommandError as exc:
         fallback = _http_fallback(auth_url)
         if fallback:
+            if git_dir.exists():
+                shutil.rmtree(git_dir)
             try:
                 return git.Repo.clone_from(fallback, str(git_dir), bare=True)
             except git.exc.GitCommandError:

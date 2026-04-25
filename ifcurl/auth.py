@@ -59,7 +59,7 @@ def get_token_for_host(host: str) -> str | None:
     try:
         data = json.loads(config_path().read_text())
         return data.get("hosts", {}).get(host) or None
-    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
         return None
 
 

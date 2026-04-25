@@ -10,7 +10,7 @@ Group=ifcurl-render
 RuntimeDirectory=ifcurl
 RuntimeDirectoryMode=0775
 RuntimeDirectoryPreserve=yes
-ExecStart=/usr/local/bin/ifcurl render-service \
+ExecStart=/opt/ifcurl/bin/ifcurl render-service \
     --socket /run/ifcurl/render.sock
 Restart=on-failure
 RestartSec=5
@@ -30,15 +30,12 @@ RestartSec=5
 # AF_INET/AF_INET6 are excluded — a compromised subprocess cannot reach
 # git hosts or any other external service.
 #
-# execve/execveat are blocked: pyvista and ifcopenshell use fork()/clone()
-# only (verified with strace).  git is never called from this service.
-# The render sandbox (run_sandboxed) uses multiprocessing.Process which
-# uses fork on Linux — safe with ~execve.
-#
 # ProtectSystem=strict + no ReadWritePaths: this service writes nothing to
 # disk; all output is returned over the Unix socket to the API service.
 # ---------------------------------------------------------------------------
 EnvironmentFile=-/etc/ifcurl/render-env
+Environment=MPLCONFIGDIR=/var/cache/ifcurl-render
+CacheDirectory=ifcurl-render
 NoNewPrivileges=yes
 RestrictSUIDSGID=yes
 PrivateTmp=yes
@@ -53,7 +50,6 @@ RestrictRealtime=yes
 RestrictAddressFamilies=AF_UNIX
 SystemCallArchitectures=native
 SystemCallFilter=@system-service @process @files @io-event
-SystemCallFilter=~execve ~execveat
 SystemCallErrorNumber=EPERM
 
 [Install]
