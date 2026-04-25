@@ -46,7 +46,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from platformdirs import user_cache_dir
 from pydantic import BaseModel
 
@@ -174,6 +174,36 @@ app = FastAPI(
 )
 
 # ---------------------------------------------------------------------------
+# Rate limiting (in-process, per client IP, sliding window)
+# ---------------------------------------------------------------------------
+
+_RATE_LIMIT: int = int(os.environ.get("IFCURL_RATE_LIMIT", "60"))  # requests/minute, 0=disabled
+_RATE_WINDOW: float = 60.0  # seconds
+_rate_lock = threading.Lock()
+_rate_hits: dict[str, list[float]] = {}
+
+
+@app.middleware("http")
+async def _rate_limit_middleware(request, call_next):
+    if _RATE_LIMIT > 0:
+        ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        cutoff = now - _RATE_WINDOW
+        with _rate_lock:
+            hits = _rate_hits.setdefault(ip, [])
+            while hits and hits[0] < cutoff:
+                hits.pop(0)
+            if len(hits) >= _RATE_LIMIT:
+                return JSONResponse(
+                    {"detail": f"Rate limit exceeded — max {_RATE_LIMIT} requests/minute"},
+                    status_code=429,
+                    headers={"Retry-After": "60"},
+                )
+            hits.append(now)
+    return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
 # SSRF protection
 # ---------------------------------------------------------------------------
 
@@ -222,6 +252,24 @@ def _ssrf_check(ifc_url: IfcUrl) -> None:
         raise HTTPException(
             status_code=403,
             detail="Requests to private/loopback addresses are not permitted",
+        )
+
+
+# ---------------------------------------------------------------------------
+# IFC blob size cap
+# ---------------------------------------------------------------------------
+
+_MAX_IFC_BYTES: int = int(os.environ.get("IFCURL_MAX_IFC_MB", "256")) * 1024 * 1024
+
+
+def _check_ifc_size(ifc_bytes: bytes) -> None:
+    """Raise 413 if the fetched IFC file exceeds IFCURL_MAX_IFC_MB."""
+    if _MAX_IFC_BYTES > 0 and len(ifc_bytes) > _MAX_IFC_BYTES:
+        mb = len(ifc_bytes) / 1024 / 1024
+        limit_mb = _MAX_IFC_BYTES // (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail=f"IFC file too large: {mb:.1f} MB (limit {limit_mb} MB)",
         )
 
 
@@ -432,6 +480,8 @@ def preview(request: PreviewRequest) -> Response:
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    _check_ifc_size(ifc_bytes)
+
     # --- Tier 2: populate / use byte cache ---
     cached_bytes = _t2_get(hexsha, ifc_url.path)
     if cached_bytes is not None:
@@ -542,6 +592,8 @@ def bcf_export(request: BcfRequest) -> Response:
         except (ImportError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+        _check_ifc_size(ifc_bytes)
+
         cached = _t2_get(hexsha, ifc_url.path)
         ifc_bytes = cached if cached is not None else ifc_bytes
         if cached is None:
@@ -650,6 +702,9 @@ def render_diff(request: DiffRequest) -> Response:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    _check_ifc_size(base_bytes)
+    _check_ifc_size(head_bytes)
 
     # --- Tier 2: populate byte cache ---
     for hexsha, path, ifc_bytes in (
