@@ -57,8 +57,22 @@ try:
 except (ImportError, AttributeError):
     _HAS_PYVISTA = False
 
+try:
+    from PIL import Image as _PILImage
+    import io as _io
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
+
 # Highlight colour used in 'highlight' visibility mode (orange).
 _HIGHLIGHT_COLOR = (255, 140, 0)
+
+# Diff colours: green=added, blue=modified, red=removed, grey=unchanged ghost.
+_DIFF_ADDED_COLOR = (50, 200, 50)
+_DIFF_MODIFIED_COLOR = (50, 100, 200)
+_DIFF_REMOVED_COLOR = (200, 50, 50)
+_DIFF_GHOST_COLOR = (180, 180, 180)
+_DIFF_GHOST_OPACITY = 0.08
 
 
 # ---------------------------------------------------------------------------
@@ -130,13 +144,20 @@ def _add_shape(
     selection_ids: frozenset[int] | None,
     visibility: str,
     clips: list[tuple[float, ...]],
+    diff_ids: dict[str, frozenset[int]] | None = None,
 ) -> None:
     """Triangulate a geometry shape, apply clips, and add it to the plotter.
 
-    Visibility modes:
+    Visibility modes (when *diff_ids* is None):
       highlight — non-selected shown normally, selected shown in highlight colour
       ghost     — selected shown normally, non-selected shown as grey + translucent
       isolate   — only selected elements are added (non-selected are skipped)
+
+    When *diff_ids* is provided the diff colouring takes precedence:
+      green  — step ID in diff_ids["added"]
+      blue   — step ID in diff_ids["modified"]
+      red    — step ID in diff_ids["removed"]
+      ghost  — step ID in none of the above (unchanged context)
     """
     geom = shape.geometry
     verts = np.array(geom.verts, dtype=float).reshape(-1, 3)
@@ -152,7 +173,7 @@ def _add_shape(
 
     is_selected = selection_ids is not None and shape.product.id() in selection_ids
 
-    if visibility == "isolate" and selection_ids is not None and not is_selected:
+    if diff_ids is None and visibility == "isolate" and selection_ids is not None and not is_selected:
         return
 
     for midx, mat in enumerate(geom.materials):
@@ -173,7 +194,17 @@ def _add_shape(
             continue
 
         # Determine colour and opacity
-        if selection_ids is None:
+        if diff_ids is not None:
+            sid = shape.product.id()
+            if sid in diff_ids.get("added", frozenset()):
+                color, opacity = _DIFF_ADDED_COLOR, 1.0
+            elif sid in diff_ids.get("modified", frozenset()):
+                color, opacity = _DIFF_MODIFIED_COLOR, 1.0
+            elif sid in diff_ids.get("removed", frozenset()):
+                color, opacity = _DIFF_REMOVED_COLOR, 1.0
+            else:
+                color, opacity = _DIFF_GHOST_COLOR, _DIFF_GHOST_OPACITY
+        elif selection_ids is None:
             color, opacity = _material_color_and_opacity(mat)
         elif visibility == "highlight":
             if is_selected:
@@ -196,6 +227,21 @@ def _add_shape(
 # ---------------------------------------------------------------------------
 
 
+def _plotter_screenshot(plotter: pv.Plotter) -> bytes:
+    """Render *plotter* off-screen and return PNG bytes."""
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
+    os.close(tmp_fd)
+    try:
+        plotter.show(screenshot=tmp_path, auto_close=True)
+        with open(tmp_path, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
 def _render_iterator(
     iterator: object,
     selection_ids: list[int] | None,
@@ -204,6 +250,7 @@ def _render_iterator(
     camera: tuple[float, ...] | None,
     fov: float | None,
     scale: float | None,
+    diff_ids: dict[str, frozenset[int]] | None = None,
 ) -> bytes:
     """Drive a geometry iterator into a pyvista plotter and return PNG bytes."""
     plotter = _Plotter(off_screen=True, window_size=(1280, 960))
@@ -213,7 +260,7 @@ def _render_iterator(
 
     while True:
         try:
-            _add_shape(iterator.get(), plotter, frozen_ids, visibility, clips)
+            _add_shape(iterator.get(), plotter, frozen_ids, visibility, clips, diff_ids=diff_ids)
         except Exception:
             pass  # skip broken shapes, keep rendering the rest
         if not iterator.next():
@@ -228,17 +275,7 @@ def _render_iterator(
             plotter.camera.parallel_projection = True
             plotter.camera.parallel_scale = scale
 
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".png")
-    os.close(tmp_fd)
-    try:
-        plotter.show(screenshot=tmp_path, auto_close=True)
-        with open(tmp_path, "rb") as f:
-            return f.read()
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+    return _plotter_screenshot(plotter)
 
 
 # ---------------------------------------------------------------------------
@@ -457,3 +494,155 @@ def render(
         raise ValueError("No renderable geometry found")
 
     return _render_iterator(iterator, selection_ids, visibility, clips, camera, fov, scale)
+
+
+def render_diff(
+    model_head: ifcopenshell.file,
+    model_base: ifcopenshell.file,
+    diff_ids: dict[str, set[int]],
+    camera: tuple[float, float, float, float, float, float, float, float, float] | None = None,
+    fov: float | None = None,
+    scale: float | None = None,
+    clips: list[tuple[float, float, float, float, float, float]] | None = None,
+) -> bytes:
+    """Render a two-pass IFC diff image.
+
+    Pass 1 renders the head (new) model with diff colouring:
+      green  — added elements
+      blue   — modified elements
+      ghost  — unchanged context (very light grey, 8 % opacity)
+
+    Pass 2 renders only the removed elements from the base (old) model in red,
+    using the same camera as pass 1.  The two images are then composited: any
+    pixel in pass 2 that is not the white background is stamped onto pass 1.
+    This means moved elements (classified as modified) appear once in blue at
+    their new position, with no ghosting artefact.
+
+    :param model_head: The newer IFC model (PR head commit).
+    :param model_base: The older IFC model (PR base commit).
+    :param diff_ids: ``{"added": set, "modified": set, "removed": set}`` of
+        step IDs, pre-expanded via :func:`ifcurl.diff.expand_step_ids`.
+    :param camera: Nine floats (px,py,pz,dx,dy,dz,ux,uy,uz).  When ``None``
+        the camera is auto-fitted to the head model scene.
+    :param fov: Perspective FOV in degrees.
+    :param scale: Orthographic scale.
+    :param clips: Clipping planes.
+    :return: PNG image bytes.
+    :raises ImportError: If pyvista, numpy, or Pillow are not installed.
+    :raises ValueError: If the head model has no renderable geometry.
+    """
+    if not _HAS_PYVISTA:
+        raise ImportError("pyvista and numpy are required for rendering.  Install with: pip install pyvista numpy")
+    if not _HAS_PIL:
+        raise ImportError("Pillow is required for diff rendering.  Install with: pip install Pillow")
+
+    clips = clips or []
+
+    frozen_diff = {k: frozenset(v) for k, v in diff_ids.items()}
+
+    # ------------------------------------------------------------------
+    # Pass 1: head model — full scene with diff colouring
+    # ------------------------------------------------------------------
+    settings_head = _build_geom_settings(model_head)
+    exclude_head = list(model_head.by_type("IfcOpeningElement"))
+    iterator_head = ifcopenshell.geom.iterator(
+        settings_head, model_head, _WORKER_COUNT,
+        exclude=exclude_head if exclude_head else None,
+    )
+    if not iterator_head.initialize():
+        raise ValueError("Head model has no renderable geometry")
+
+    plotter1 = _Plotter(off_screen=True, window_size=(1280, 960))
+    plotter1.background_color = "white"
+
+    while True:
+        try:
+            _add_shape(iterator_head.get(), plotter1, None, "highlight", clips, diff_ids=frozen_diff)
+        except Exception:
+            pass
+        if not iterator_head.next():
+            break
+
+    if camera is not None:
+        _apply_camera(plotter1, camera, fov, scale)
+    else:
+        plotter1.reset_camera()
+        plotter1.camera.up = (0, 0, 1)
+        if scale is not None:
+            plotter1.camera.parallel_projection = True
+            plotter1.camera.parallel_scale = scale
+
+    # Capture camera state BEFORE closing plotter1 so pass 2 uses the same view.
+    _cam1_pos = tuple(plotter1.camera.position)
+    _cam1_focal = tuple(plotter1.camera.focal_point)
+    _cam1_up = tuple(plotter1.camera.up)
+    _cam1_angle = float(plotter1.camera.view_angle)
+    _cam1_parallel = bool(plotter1.camera.parallel_projection)
+    _cam1_pscale = float(plotter1.camera.parallel_scale)
+
+    pass1_png = _plotter_screenshot(plotter1)
+
+    # ------------------------------------------------------------------
+    # Pass 2: base model — removed elements only, in red.
+    # Apply the same camera that pass 1 used.
+    # ------------------------------------------------------------------
+    removed_ids = diff_ids.get("removed", set())
+    if not removed_ids:
+        return pass1_png
+
+    removed_entities = []
+    for eid in removed_ids:
+        try:
+            removed_entities.append(model_base.by_id(eid))
+        except Exception:
+            pass
+    if not removed_entities:
+        return pass1_png
+
+    settings_base = _build_geom_settings(model_base)
+    iterator_base = ifcopenshell.geom.iterator(
+        settings_base, model_base, _WORKER_COUNT, include=removed_entities
+    )
+    if not iterator_base.initialize():
+        return pass1_png
+
+    removed_diff = {"added": frozenset(), "modified": frozenset(), "removed": frozenset(removed_ids)}
+
+    plotter2 = _Plotter(off_screen=True, window_size=(1280, 960))
+    plotter2.background_color = "white"
+
+    while True:
+        try:
+            _add_shape(iterator_base.get(), plotter2, None, "highlight", clips, diff_ids=removed_diff)
+        except Exception:
+            pass
+        if not iterator_base.next():
+            break
+
+    plotter2.camera.position = _cam1_pos
+    plotter2.camera.focal_point = _cam1_focal
+    plotter2.camera.up = _cam1_up
+    plotter2.camera.view_angle = _cam1_angle
+    plotter2.camera.parallel_projection = _cam1_parallel
+    plotter2.camera.parallel_scale = _cam1_pscale
+
+    pass2_png = _plotter_screenshot(plotter2)
+
+    # ------------------------------------------------------------------
+    # Composite: stamp pass 2 non-background pixels onto pass 1
+    # ------------------------------------------------------------------
+    return _composite_diff(pass1_png, pass2_png)
+
+
+def _composite_diff(pass1_png: bytes, pass2_png: bytes) -> bytes:
+    """Overlay pass 2 onto pass 1 wherever pass 2 is not white background."""
+    img1 = np.array(_PILImage.open(_io.BytesIO(pass1_png)).convert("RGB"))
+    img2 = np.array(_PILImage.open(_io.BytesIO(pass2_png)).convert("RGB"))
+
+    mask = np.any(img2 != 255, axis=2)
+    result = img1.copy()
+    result[mask] = img2[mask]
+
+    buf = _io.BytesIO()
+    _PILImage.fromarray(result).save(buf, format="PNG")
+    return buf.getvalue()

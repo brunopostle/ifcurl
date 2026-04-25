@@ -51,6 +51,7 @@ from pydantic import BaseModel
 
 from ifcurl.auth import get_token_for_host
 from ifcurl.bcf import build_bcf
+from ifcurl.git import diff_text as git_diff_text
 from ifcurl.git import fetch_ifc
 from ifcurl.sandbox import SandboxCrashError, SandboxTimeoutError, run_sandboxed
 from ifcurl.url import IfcUrl
@@ -120,6 +121,37 @@ def _sandboxed_select(ifc_bytes: bytes, selector: str) -> list[str]:
     model = ifcopenshell.file.from_string(ifc_bytes.decode())
     matched = list(ifcopenshell.util.selector.filter_elements(model, selector))
     return [e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId]
+
+
+def _sandboxed_diff(
+    head_bytes: bytes,
+    base_bytes: bytes,
+    raw_diff_text: str,
+    camera: tuple | None,
+    fov: float | None,
+    scale: float | None,
+    clips: list,
+) -> bytes:
+    """Parse both models, expand diff IDs, and render the two-pass diff image."""
+    import ifcopenshell
+    from ifcurl import render as render_mod
+    from ifcurl.diff import expand_step_ids, step_ids_from_diff
+
+    model_head = ifcopenshell.file.from_string(head_bytes.decode())
+    model_base = ifcopenshell.file.from_string(base_bytes.decode())
+
+    raw_ids = step_ids_from_diff(raw_diff_text)
+    diff_ids = expand_step_ids(model_head, raw_ids)
+
+    return render_mod.render_diff(
+        model_head=model_head,
+        model_base=model_base,
+        diff_ids=diff_ids,
+        camera=camera,
+        fov=fov,
+        scale=scale,
+        clips=clips or None,
+    )
 
 
 app = FastAPI(
@@ -292,6 +324,15 @@ class BcfRequest(BaseModel):
     title: str = "IFC View"
     comment: str = ""
     token: str | None = None
+
+
+class DiffRequest(BaseModel):
+    base: str
+    """ifc:// URL for the base (older) commit."""
+    head: str
+    """ifc:// URL for the head (newer) commit."""
+    token: str | None = None
+    """Optional bearer token for git authentication."""
 
 
 # ---------------------------------------------------------------------------
@@ -483,4 +524,127 @@ def bcf_export(request: BcfRequest) -> Response:
         content=bcf_bytes,
         media_type="application/octet-stream",
         headers={"Content-Disposition": 'attachment; filename="view.bcf"'},
+    )
+
+
+@app.get("/render_diff")
+def render_diff_get(base: str, head: str, token: str | None = None) -> Response:
+    """GET variant of POST /render_diff for use in HTML ``<img src>`` tags.
+
+    *base* and *head* are ifc:// URLs (URL-encoded) for the base and head
+    commits of the same IFC file.  The optional *token* is a bearer token
+    for private-repository access.
+    """
+    return render_diff(DiffRequest(base=base, head=head, token=token))
+
+
+@app.post("/render_diff")
+def render_diff(request: DiffRequest) -> Response:
+    """Render a two-pass IFC diff image (green=added, blue=modified, red=removed).
+
+    Both URLs must refer to the same IFC file path in the same repository.
+    The result is cached on disk when both refs are immutable (commit hashes).
+    Returns ``image/png``.
+    """
+    # --- Parse ---
+    try:
+        base_url = IfcUrl.parse(request.base)
+        head_url = IfcUrl.parse(request.head)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    for label, ifc_url in (("base", base_url), ("head", head_url)):
+        if ifc_url.path is None:
+            raise HTTPException(status_code=400, detail=f"{label} URL has no 'path' parameter")
+
+    if base_url.path != head_url.path:
+        raise HTTPException(
+            status_code=400,
+            detail=f"base and head must refer to the same IFC path ({base_url.path!r} vs {head_url.path!r})",
+        )
+
+    # --- SSRF protection ---
+    _ssrf_check(base_url)
+    _ssrf_check(head_url)
+
+    # --- Tier 4: cached diff PNG (immutable refs only) ---
+    both_immutable = not base_url.is_mutable_ref() and not head_url.is_mutable_ref()
+    cache_key = f"diff:{request.base}:{request.head}"
+    if both_immutable:
+        cached_png = _t4_get(cache_key)
+        if cached_png is not None:
+            return Response(
+                content=cached_png,
+                media_type="image/png",
+                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            )
+
+    # --- Resolve authentication token ---
+    token = request.token
+    if token is None and base_url.host:
+        token = get_token_for_host(base_url.host)
+
+    # --- Fetch IFC bytes for both commits ---
+    try:
+        base_hexsha, base_bytes = fetch_ifc(base_url, token=token)
+        head_hexsha, head_bytes = fetch_ifc(head_url, token=token)
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # --- Tier 2: populate byte cache ---
+    for hexsha, path, ifc_bytes in (
+        (base_hexsha, base_url.path, base_bytes),
+        (head_hexsha, head_url.path, head_bytes),
+    ):
+        cached = _t2_get(hexsha, path)
+        if cached is not None:
+            if hexsha == base_hexsha:
+                base_bytes = cached
+            else:
+                head_bytes = cached
+        else:
+            _t2_put(hexsha, path, ifc_bytes)
+
+    # --- Get git diff text ---
+    try:
+        raw_diff = git_diff_text(base_url, head_url, token=token)
+    except (ImportError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"Could not diff: {exc}") from exc
+
+    # --- Sandboxed parse + expand + render ---
+    try:
+        png_bytes = run_sandboxed(
+            _sandboxed_diff,
+            head_bytes,
+            base_bytes,
+            raw_diff,
+            head_url.camera,
+            head_url.fov,
+            head_url.scale,
+            head_url.clips or [],
+        )
+    except SandboxCrashError as exc:
+        raise HTTPException(status_code=422, detail=f"IFC diff render crashed: {exc}") from exc
+    except SandboxTimeoutError as exc:
+        raise HTTPException(status_code=503, detail=f"Diff render timed out: {exc}") from exc
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # --- Tier 4: cache and return ---
+    if both_immutable:
+        _t4_put(cache_key, png_bytes)
+        return Response(
+            content=png_bytes,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
+
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store"},
     )

@@ -75,6 +75,43 @@ def fetch_ifc(ifc_url: IfcUrl, token: str | None = None) -> tuple[str, bytes]:
     return _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
 
 
+def diff_text(base_url: IfcUrl, head_url: IfcUrl, token: str | None = None) -> str:
+    """Return the raw ``git diff`` text between *base_url* and *head_url*.
+
+    Both URLs must refer to the same IFC file path in the same repository.
+    The diff is produced against the cached bare clone, so no additional
+    network fetch is performed beyond what :func:`fetch_ifc` already did.
+
+    :param base_url: The older (base) ref — typically the PR base commit.
+    :param head_url: The newer (head) ref — typically the PR head commit.
+    :param token: Optional HTTPS token for authentication.
+    :raises ImportError: If GitPython is not installed.
+    :raises ValueError: If the paths differ, a ref is not found, or the diff
+        cannot be produced.
+    """
+    if not _HAS_GITPYTHON:
+        raise ImportError("GitPython is not installed.  Install with: pip install gitpython")
+    if base_url.path is None or head_url.path is None:
+        raise ValueError("Both URLs must have a 'path' parameter")
+    if base_url.path != head_url.path:
+        raise ValueError(
+            f"base and head URLs must refer to the same IFC path "
+            f"(got {base_url.path!r} vs {head_url.path!r})"
+        )
+
+    repo = _get_repo(base_url, token=token)
+    try:
+        base_hexsha = repo.commit(base_url.git_ref()).hexsha
+        head_hexsha = repo.commit(head_url.git_ref()).hexsha
+    except (git.exc.BadName, git.exc.BadObject) as exc:
+        raise ValueError(f"Ref not found: {exc}") from exc
+
+    try:
+        return repo.git.diff(base_hexsha, head_hexsha, "--", base_url.path)
+    except git.exc.GitCommandError as exc:
+        raise ValueError(f"git diff failed: {exc.stderr.strip()}") from exc
+
+
 def fetch_ifc_bytes(ifc_url: IfcUrl, token: str | None = None) -> bytes:
     """Return the raw bytes of the IFC file addressed by *ifc_url*.
 
