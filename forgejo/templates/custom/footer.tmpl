@@ -53,6 +53,49 @@
     }
 
     // -----------------------------------------------------------------------
+    // Case 3: PR diff page — inject a render_diff image below the header of
+    // each .ifc file in the diff.  Requires Nginx to proxy /render_diff to
+    // the ifcurl preview service (see forgejo/README.md).
+    // -----------------------------------------------------------------------
+    var prMatch = window.location.pathname.match(/^\/([^/]+\/[^/]+)\/pulls\/(\d+)\/files$/);
+    if (prMatch) {
+      var prRepoPath = prMatch[1];
+      var prNum = prMatch[2];
+      fetch("/api/v1/repos/" + prRepoPath + "/pulls/" + prNum)
+        .then(function(r) { return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function(pr) {
+          var baseSha = pr.base && pr.base.sha;
+          var headSha = pr.head && pr.head.sha;
+          if (!baseSha || !headSha) return;
+          var origin = window.location.origin;
+          document.querySelectorAll('a[href*="/src/commit/"]').forEach(function(a) {
+            var info = parseCommitHref(a.getAttribute("href"));
+            if (!info || !info.treePath.toLowerCase().endsWith(".ifc")) return;
+            if (info.hash !== headSha) return;
+            var baseIfc = "ifc://" + host + "/" + prRepoPath + "@" + baseSha
+                        + "?path=" + encodeURIComponent(info.treePath);
+            var headIfc = "ifc://" + host + "/" + prRepoPath + "@" + headSha
+                        + "?path=" + encodeURIComponent(info.treePath);
+            var img = document.createElement("img");
+            img.src = origin + "/render_diff"
+                    + "?base=" + encodeURIComponent(baseIfc)
+                    + "&head=" + encodeURIComponent(headIfc);
+            img.style.cssText = "max-width:100%;display:block;margin:8px 0";
+            img.alt = info.treePath;
+            var fileBox = a.closest(".diff-file-box");
+            var header = fileBox && fileBox.querySelector(".file-header");
+            if (header) {
+              header.insertAdjacentElement("afterend", img);
+            } else {
+              a.insertAdjacentElement("afterend", img);
+            }
+          });
+        })
+        .catch(function() {}); // silently skip on API error
+      return;
+    }
+
+    // -----------------------------------------------------------------------
     // Case 2: file history page — inject a "3D" link next to each commit's
     // browse-file link (/src/commit/{hash}/{treepath}).
     // -----------------------------------------------------------------------

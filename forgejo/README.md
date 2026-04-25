@@ -178,9 +178,42 @@ Add to `/etc/forgejo/conf/app.ini`:
 PREVIEW_SERVICE_URL = http://localhost:8000
 ```
 
-Set `PREVIEW_SERVICE_URL` to the base URL of the running ifcurl preview
-service. If left empty, ifc:// links in markdown render as plain links with
-no preview image.
+`PREVIEW_SERVICE_URL` is used **server-side** by Forgejo's markdown renderer to
+fetch preview images when rendering ifc:// links in issue descriptions and
+comments.  It runs on the Forgejo server itself, so `localhost:8000` is the
+right value.
+
+If left empty, ifc:// links in markdown render as plain links with no preview
+image.
+
+---
+
+## Nginx reverse-proxy for PR diff images
+
+The PR diff viewer (Case 3 in `footer.tmpl`) injects `<img src="/render_diff?…">`
+tags that the **browser** must fetch.  The browser resolves `/render_diff` against
+the Forgejo origin, so the ifcurl service must be reachable at the public URL.
+
+Add these proxy locations to the Nginx virtual host that fronts Forgejo:
+
+```nginx
+# ifcurl preview service — served under the same origin as Forgejo
+location /preview {
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_set_header   Host $host;
+    proxy_read_timeout 120s;
+}
+
+location /render_diff {
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_set_header   Host $host;
+    proxy_read_timeout 120s;
+}
+```
+
+Without this proxy the "View in 3D" button (Case 1/2) still works — it opens
+the viewer HTML which fetches the IFC file directly.  The PR diff images
+(Case 3) will silently fail to load until the proxy is in place.
 
 ---
 
