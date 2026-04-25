@@ -9,4 +9,4 @@
 # Committed per-repo .gitattributes files are NOT read by git in bare-repo
 # context and are therefore insufficient for the server-side conflict check.
 
-*.ifc merge=ifcmerge
+*.ifc merge=ifcmerge_ours

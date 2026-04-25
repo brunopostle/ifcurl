@@ -286,17 +286,25 @@ Or apply the blocks from `server-config/gitconfig-ifcmerge` directly into
 
 ### Merge direction
 
-The merge driver is asymmetrical: `ifcmerge` rewrites STEP IDs from `%B`
-(theirs) to match `%A` (ours), so `%A`'s ID space is preserved.
+The invariant is that step-IDs in `main`/`master` must never be renumbered,
+because existing cross-references depend on them.  The correct driver depends
+on which branch is the "local" (`%A`) side:
 
-For Forgejo, use the **"Merge commit"** strategy (not rebase or squash).
-With a merge commit, `%A` is always the base branch (e.g. `main`) and
-`%B` is the pull-request branch — so `main`'s STEP IDs are preserved and
-existing cross-references remain valid.
+| Situation | `%A` (local) | `%B` (remote) | Driver to use |
+|---|---|---|---|
+| Forgejo "Merge commit" button | `main` | PR branch | `ifcmerge_ours` (`--prioritise-local`) |
+| Developer rebasing PR from `main` | PR branch | `main` | `ifcmerge` (default) |
 
-A second driver `ifcmerge_ours` is defined in the config file for cases
-where the base branch arrives as `%B`; see comments in
-`server-config/gitconfig-ifcmerge` for details.
+For Forgejo server-side merges, use the **"Merge commit"** strategy (not
+rebase or squash) and configure `.gitattributes` to use `ifcmerge_ours`:
+
+```
+*.ifc merge=ifcmerge_ours
+```
+
+`ifcmerge` (no flag) is for client-side use by developers updating their
+working branch from `main`, where `main` arrives as the remote (`%B`) side
+and its IDs are preserved by default.
 
 ### Client-side `.gitattributes`
 

@@ -12,22 +12,32 @@
 #
 # How the merge drivers work
 # --------------------------
-# ifcmerge rewrites STEP IDs from %B to match %A's ID space, so %A's IDs
-# are preserved in the merged result.  Use the "Merge commit" strategy in
-# Forgejo so that %A is always the base branch (e.g. main).
+# The invariant: step-IDs in main/master must never be renumbered, because
+# existing cross-references depend on them.  ifcmerge always renumbers the
+# "remote" side by default; --prioritise-local reverses this and renumbers
+# the "remote" side instead.  The correct driver depends on which branch is
+# checked out when the merge happens:
 #
-# Two variants are registered for symmetry:
-#   ifcmerge        — base branch is %A (standard merge-commit direction)
-#   ifcmerge_ours   — base branch is %B (rebase direction); swaps %A/%B so
-#                     base-branch IDs are still preserved
+#   ifcmerge        — use when local (%A) is a working/PR branch and
+#                     remote (%B) is main/master.  Default behaviour
+#                     preserves remote (main) IDs.
+#                     e.g. rebasing or updating a PR branch from main.
+#
+#   ifcmerge_ours   — use when local (%A) is main/master and remote (%B)
+#                     is a working/PR branch.  --prioritise-local preserves
+#                     local (main) IDs.
+#                     e.g. Forgejo "Merge commit" button (standard PR merge).
+#
+# Use the "Merge commit" strategy in Forgejo (not rebase or squash) so that
+# %A is always the base branch — ifcmerge_ours is then the correct driver.
 
 [core]
     attributesFile = /etc/gitattributes
 
 [merge "ifcmerge"]
-    name = IFC merge driver (base is ours)
-    driver = ifcmerge %O %A %B %L
+    name = IFC merge driver (merging from main into working branch)
+    driver = ifcmerge %O %A %B %A
 
 [merge "ifcmerge_ours"]
-    name = IFC merge driver (base is theirs)
-    driver = ifcmerge %O %B %A %L
+    name = IFC merge driver (merging PR branch into main)
+    driver = ifcmerge --prioritise-local %O %A %B %A
