@@ -96,6 +96,60 @@
     }
 
     // -----------------------------------------------------------------------
+    // Case 4: individual commit page — inject a render_diff image (or plain
+    // preview for added/deleted files) below the header of each .ifc file
+    // in the diff.
+    // -----------------------------------------------------------------------
+    var commitMatch = window.location.pathname.match(/^\/([^/]+\/[^/]+)\/commit\/([0-9a-f]{40})$/i);
+    if (commitMatch) {
+      var repoPath = commitMatch[1];
+      var headSha = commitMatch[2];
+      var origin = window.location.origin;
+
+      // Extract parent SHA from the "parent" commit link at the top of the page.
+      var parentSha = null;
+      var parentLink = document.querySelector("a.primary.sha.label[href*='/commit/']");
+      if (parentLink) {
+        var pm = parentLink.getAttribute("href").match(/\/commit\/([0-9a-f]{40})$/i);
+        if (pm) parentSha = pm[1];
+      }
+
+      document.querySelectorAll(".diff-file-box").forEach(function(box) {
+        var newFile = box.getAttribute("data-new-filename") || "";
+        var oldFile = box.getAttribute("data-old-filename") || "";
+        var newIsIfc = newFile.toLowerCase().endsWith(".ifc");
+        var oldIsIfc = oldFile.toLowerCase().endsWith(".ifc");
+
+        var ifcPath, imgSrc;
+        if (newIsIfc && oldIsIfc && newFile === oldFile && parentSha) {
+          // Modified: show colour-coded diff
+          ifcPath = newFile;
+          var baseIfc = "ifc://" + host + "/" + repoPath + "@" + parentSha + "?path=" + encodeURIComponent(ifcPath);
+          var headIfc = "ifc://" + host + "/" + repoPath + "@" + headSha + "?path=" + encodeURIComponent(ifcPath);
+          imgSrc = origin + "/render_diff?base=" + encodeURIComponent(baseIfc) + "&head=" + encodeURIComponent(headIfc);
+        } else if (newIsIfc) {
+          // Added (or renamed to .ifc): plain preview of new version
+          ifcPath = newFile;
+          imgSrc = origin + "/preview?url=" + encodeURIComponent("ifc://" + host + "/" + repoPath + "@" + headSha + "?path=" + encodeURIComponent(ifcPath));
+        } else if (oldIsIfc && parentSha) {
+          // Deleted (or renamed from .ifc): plain preview of old version
+          ifcPath = oldFile;
+          imgSrc = origin + "/preview?url=" + encodeURIComponent("ifc://" + host + "/" + repoPath + "@" + parentSha + "?path=" + encodeURIComponent(ifcPath));
+        } else {
+          return;
+        }
+
+        var img = document.createElement("img");
+        img.src = imgSrc;
+        img.style.cssText = "max-width:100%;display:block;margin:8px 0";
+        img.alt = ifcPath;
+        var header = box.querySelector(".diff-file-header");
+        if (header) header.insertAdjacentElement("afterend", img);
+      });
+      return;
+    }
+
+    // -----------------------------------------------------------------------
     // Case 2: file history page — inject a "3D" link next to each commit's
     // browse-file link (/src/commit/{hash}/{treepath}).
     // -----------------------------------------------------------------------
