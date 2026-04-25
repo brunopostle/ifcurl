@@ -160,9 +160,11 @@
       </div>
       <div class="field" style="flex:2">
         <label>ref</label>
-        <input id="ref-input" class="ti" type="text"
+        <input id="ref-input" class="ti" type="text" list="ref-list"
                placeholder="heads/main or commit hash" spellcheck="false">
+        <button id="ref-pick-btn" class="tb-btn" title="Browse branches and tags">▾</button>
       </div>
+      <datalist id="ref-list"></datalist>
       <span id="ref-badge" style="display:none" title="Pinned to this commit — not tracking branch tip"></span>
       <button id="ref-switch-btn" class="tb-btn" style="display:none"></button>
       <div class="field" style="flex:2">
@@ -291,6 +293,11 @@
       }
     }
 
+    // Populate ref datalist in background (non-blocking).
+    if (parsed?.host && parsed?.repoSuffix) {
+      populateRefList(parsed.host, parsed.repoSuffix).catch(() => { /* silent */ });
+    }
+
     // -----------------------------------------------------------------------
     // Navigate to the viewer with a different ifc:// URL.
     // -----------------------------------------------------------------------
@@ -304,12 +311,48 @@
       if (e.key === "Enter") { const v = urlInput.value.trim(); if (v) loadUrl(v); }
     });
 
+    // Build URL from structured fields, preserving camera/clip/fov/scale from
+    // the current URL so that ref/path changes keep the viewer's camera state.
+    function loadFromFields() {
+      if (threeCamera) syncCameraUrl(threeCamera);
+      const structural = buildIfcUrl();
+      if (!structural) return;
+      const current = urlInput.value.trim();
+      const qI = current.indexOf("?");
+      if (qI < 0) { loadUrl(structural); return; }
+      const currentQs = new URLSearchParams(current.slice(qI + 1));
+      const qI2 = structural.indexOf("?");
+      const structBase = qI2 < 0 ? structural : structural.slice(0, qI2);
+      const structQs   = new URLSearchParams(qI2 < 0 ? "" : structural.slice(qI2 + 1));
+      for (const key of ["camera", "fov", "scale"]) {
+        const v = currentQs.get(key);
+        if (v) structQs.set(key, v); else structQs.delete(key);
+      }
+      structQs.delete("clip");
+      for (const v of currentQs.getAll("clip")) structQs.append("clip", v);
+      const qsStr = structQs.toString()
+        .replace(/%2C/g, ",").replace(/%2B/g, "+").replace(/%24/g, "$");
+      loadUrl(structBase + (qsStr ? "?" + qsStr : ""));
+    }
+
     // Pressing Enter in any structured field rebuilds the URL and navigates.
     for (const el of [repoInput, refInput, pathInput, selectorInput]) {
-      el.addEventListener("keydown", e => {
-        if (e.key === "Enter") { const u = buildIfcUrl(); if (u) loadUrl(u); }
-      });
+      el.addEventListener("keydown", e => { if (e.key === "Enter") loadFromFields(); });
     }
+
+    // ▾ button: clear + focus the ref field so the datalist shows all refs.
+    const refPickBtn = document.getElementById("ref-pick-btn");
+    refPickBtn.addEventListener("click", () => {
+      refInput.value = "";
+      refInput.focus();
+    });
+
+    // Auto-navigate when user selects a datalist option (exact match).
+    refInput.addEventListener("input", () => {
+      const dl = document.getElementById("ref-list");
+      const known = [...dl.options].map(o => o.value);
+      if (known.includes(refInput.value.trim())) loadFromFields();
+    });
 
     // Disable camera controls while any input has focus.
     function onInputFocus() { if (cameraControls) cameraControls.enabled = false; }
@@ -396,6 +439,8 @@
       el.addEventListener("pointerdown", e => e.stopPropagation());
       el.addEventListener("mousedown",   e => e.stopPropagation());
     }
+    refPickBtn.addEventListener("pointerdown", e => e.stopPropagation());
+    refPickBtn.addEventListener("mousedown",   e => e.stopPropagation());
 
     fovInput.addEventListener("change", () => {
       if (!threeCamera?.isPerspectiveCamera) return;
@@ -976,6 +1021,36 @@
             await hider.isolate(found);
           }
         });
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Ref picker: populate <datalist id="ref-list"> with branches + tags.
+    // -----------------------------------------------------------------------
+    async function populateRefList(host, repoSuffix) {
+      const proto = host.startsWith("localhost") ? "http" : "https";
+      const base = `${proto}://${host}/api/v1/repos/${repoSuffix}`;
+      const sig = AbortSignal.timeout(4000);
+      const [branchRes, tagRes] = await Promise.allSettled([
+        fetch(`${base}/branches?limit=50`, { signal: sig }),
+        fetch(`${base}/tags?limit=50`,     { signal: sig }),
+      ]);
+      const dl = document.getElementById("ref-list");
+      if (branchRes.status === "fulfilled" && branchRes.value.ok) {
+        const branches = await branchRes.value.json().catch(() => []);
+        for (const b of (branches ?? [])) {
+          const opt = document.createElement("option");
+          opt.value = `heads/${b.name}`;
+          dl.appendChild(opt);
+        }
+      }
+      if (tagRes.status === "fulfilled" && tagRes.value.ok) {
+        const tags = await tagRes.value.json().catch(() => []);
+        for (const t of (tags ?? [])) {
+          const opt = document.createElement("option");
+          opt.value = `tags/${t.name}`;
+          dl.appendChild(opt);
+        }
       }
     }
 
