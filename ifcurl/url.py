@@ -44,7 +44,9 @@ class IfcUrl:
     camera: tuple[float, float, float, float, float, float, float, float, float] | None
     fov: float | None  # perspective field of view in degrees
     scale: float | None  # orthographic view-to-world scale (BCF ViewToWorldScale)
-    clips: list[tuple[float, float, float, float, float, float]] = field(default_factory=list)
+    clips: list[tuple[float, float, float, float, float, float]] = field(
+        default_factory=list
+    )
     visibility: str = "highlight"  # 'highlight', 'ghost', or 'isolate'
 
     @classmethod
@@ -99,9 +101,13 @@ class IfcUrl:
             try:
                 vals = [float(v) for v in qs["camera"][0].split(",")]
             except ValueError as exc:
-                raise ValueError(f"'camera' contains non-numeric value: {qs['camera'][0]!r}") from exc
+                raise ValueError(
+                    f"'camera' contains non-numeric value: {qs['camera'][0]!r}"
+                ) from exc
             if len(vals) != 9:
-                raise ValueError(f"'camera' requires exactly 9 values (px,py,pz,dx,dy,dz,ux,uy,uz), got {len(vals)}")
+                raise ValueError(
+                    f"'camera' requires exactly 9 values (px,py,pz,dx,dy,dz,ux,uy,uz), got {len(vals)}"
+                )
             camera = tuple(vals)  # type: ignore[assignment]
 
         fov: float | None = None
@@ -109,17 +115,23 @@ class IfcUrl:
             try:
                 fov = float(qs["fov"][0])
             except ValueError as exc:
-                raise ValueError(f"'fov' must be a number, got {qs['fov'][0]!r}") from exc
+                raise ValueError(
+                    f"'fov' must be a number, got {qs['fov'][0]!r}"
+                ) from exc
 
         scale: float | None = None
         if "scale" in qs:
             try:
                 scale = float(qs["scale"][0])
             except ValueError as exc:
-                raise ValueError(f"'scale' must be a number, got {qs['scale'][0]!r}") from exc
+                raise ValueError(
+                    f"'scale' must be a number, got {qs['scale'][0]!r}"
+                ) from exc
 
         if camera is not None and fov is None and scale is None:
-            raise ValueError("'camera' requires either 'fov' (perspective) or 'scale' (orthographic)")
+            raise ValueError(
+                "'camera' requires either 'fov' (perspective) or 'scale' (orthographic)"
+            )
         if fov is not None and scale is not None:
             raise ValueError("'fov' and 'scale' are mutually exclusive")
 
@@ -128,14 +140,20 @@ class IfcUrl:
             try:
                 vals = [float(v) for v in clip_str.split(",")]
             except ValueError as exc:
-                raise ValueError(f"'clip' contains non-numeric value: {clip_str!r}") from exc
+                raise ValueError(
+                    f"'clip' contains non-numeric value: {clip_str!r}"
+                ) from exc
             if len(vals) != 6:
-                raise ValueError(f"'clip' requires exactly 6 values (px,py,pz,nx,ny,nz), got {len(vals)}")
+                raise ValueError(
+                    f"'clip' requires exactly 6 values (px,py,pz,nx,ny,nz), got {len(vals)}"
+                )
             clips.append(tuple(vals))  # type: ignore[arg-type]
 
         visibility_raw = qs.get("visibility", ["highlight"])[0]
         if visibility_raw not in ("highlight", "ghost", "isolate"):
-            raise ValueError(f"Unknown visibility mode {visibility_raw!r}; expected 'highlight', 'ghost', or 'isolate'")
+            raise ValueError(
+                f"Unknown visibility mode {visibility_raw!r}; expected 'highlight', 'ghost', or 'isolate'"
+            )
 
         return cls(
             transport=transport,
@@ -176,7 +194,7 @@ class IfcUrl:
         HEAD        →  HEAD
         """
         if self.ref.startswith("heads/"):
-            return self.ref[len("heads/"):]
+            return self.ref[len("heads/") :]
         if self.ref.startswith("tags/"):
             return f"refs/{self.ref}"
         return self.ref  # commit hash or HEAD

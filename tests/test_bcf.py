@@ -16,7 +16,7 @@ client = TestClient(app)
 
 FAKE_HEXSHA = "b" * 40
 MUTABLE_URL = "ifc://example.com/org/repo@heads/main?path=model.ifc"
-CAMERA_URL  = (
+CAMERA_URL = (
     "ifc://example.com/org/repo@heads/main"
     "?path=model.ifc&camera=1,2,3,0,0,-1,0,1,0&fov=60"
 )
@@ -168,9 +168,9 @@ class TestBcfEndpoint:
         assert not any(n.endswith("viewpoint.bcfv") for n in names)
 
     def test_title_and_comment_in_markup(self):
-        r = client.post("/bcf", json={
-            "url": CAMERA_URL, "title": "My issue", "comment": "Fix this"
-        })
+        r = client.post(
+            "/bcf", json={"url": CAMERA_URL, "title": "My issue", "comment": "Fix this"}
+        )
         markup = next(n for n in _zip_names(r.content) if n.endswith("markup.bcf"))
         content = _zip_read(r.content, markup)
         assert "My issue" in content
@@ -193,7 +193,9 @@ class TestBcfEndpoint:
         assert r.status_code == 403
 
     def test_ssrf_private_ip_rejected(self):
-        r = client.post("/bcf", json={"url": "ifc://192.168.1.1/org/repo@HEAD?path=m.ifc"})
+        r = client.post(
+            "/bcf", json={"url": "ifc://192.168.1.1/org/repo@HEAD?path=m.ifc"}
+        )
         assert r.status_code == 403
 
     def test_invalid_url_returns_400(self):
@@ -206,7 +208,9 @@ class TestBcfEndpoint:
         def mock_fetch(ifc_url, token=None):
             return FAKE_HEXSHA, ifc_bytes
 
-        selector_url = MUTABLE_URL.replace("?path=model.ifc", "?path=model.ifc&selector=IfcWall")
+        selector_url = MUTABLE_URL.replace(
+            "?path=model.ifc", "?path=model.ifc&selector=IfcWall"
+        )
         with patch("ifcurl.service.fetch_ifc", mock_fetch):
             r = client.post("/bcf", json={"url": selector_url})
         assert r.status_code == 200

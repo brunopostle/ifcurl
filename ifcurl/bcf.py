@@ -30,10 +30,9 @@ from __future__ import annotations
 
 import io
 import uuid
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime, timezone
-
 
 _VERSION_XML = b"""\
 <?xml version="1.0" encoding="utf-8"?>
@@ -93,10 +92,13 @@ def _viewpoint_xml(
         cps = ET.SubElement(root, "ClippingPlanes")
         for clip in clips:
             cp = ET.SubElement(cps, "ClippingPlane")
-            _xyz(cp, "Location",  clip[0], clip[1], clip[2])
+            _xyz(cp, "Location", clip[0], clip[1], clip[2])
             _xyz(cp, "Direction", clip[3], clip[4], clip[5])
 
-    return b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="unicode").encode()
+    return (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        + ET.tostring(root, encoding="unicode").encode()
+    )
 
 
 def _markup_xml(
@@ -109,8 +111,9 @@ def _markup_xml(
     description: str = "",
 ) -> bytes:
     root = ET.Element("Markup")
-    topic = ET.SubElement(root, "Topic",
-                          Guid=topic_guid, TopicType="Coordination", TopicStatus="Open")
+    topic = ET.SubElement(
+        root, "Topic", Guid=topic_guid, TopicType="Coordination", TopicStatus="Open"
+    )
     ET.SubElement(topic, "Title").text = title or "IFC View"
     if description:
         ET.SubElement(topic, "Description").text = description
@@ -128,7 +131,10 @@ def _markup_xml(
         if vp_guid:
             ET.SubElement(c, "Viewpoint", Guid=vp_guid)
 
-    return b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="unicode").encode()
+    return (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        + ET.tostring(root, encoding="unicode").encode()
+    )
 
 
 def build_bcf(
@@ -171,6 +177,8 @@ def build_bcf(
         if vp_guid is not None:
             zf.writestr(
                 f"{topic_guid}/viewpoint.bcfv",
-                _viewpoint_xml(vp_guid, camera, fov, scale, clips or [], guids, visibility),
+                _viewpoint_xml(
+                    vp_guid, camera, fov, scale, clips or [], guids, visibility
+                ),
             )
     return buf.getvalue()

@@ -29,6 +29,7 @@ def _segfault():
 
 def _sleep_forever():
     import time
+
     time.sleep(9999)
 
 

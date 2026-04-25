@@ -40,7 +40,6 @@ import ipaddress
 import os
 import threading
 import time
-
 from collections import OrderedDict
 from pathlib import Path
 
@@ -60,6 +59,7 @@ from ifcurl.url import IfcUrl
 # Subprocess pipeline functions (run inside run_sandboxed — no service imports)
 # ---------------------------------------------------------------------------
 
+
 def _sandboxed_pipeline(
     ifc_bytes: bytes,
     selector: str | None,
@@ -77,6 +77,7 @@ def _sandboxed_pipeline(
     """
     import ifcopenshell
     import ifcopenshell.util.selector
+
     from ifcurl import render as render_mod
 
     model = ifcopenshell.file.from_string(ifc_bytes.decode())
@@ -134,6 +135,7 @@ def _sandboxed_diff(
 ) -> bytes:
     """Parse both models, expand diff IDs, and render the two-pass diff image."""
     import ifcopenshell
+
     from ifcurl import render as render_mod
     from ifcurl.diff import expand_step_ids, step_ids_from_diff
 
@@ -182,7 +184,12 @@ def _is_private_ip(host: str) -> bool:
     bare = host.split(":")[0].strip("[]")  # strip port and IPv6 brackets
     try:
         addr = ipaddress.ip_address(bare)
-        return addr.is_loopback or addr.is_link_local or addr.is_private or addr.is_reserved
+        return (
+            addr.is_loopback
+            or addr.is_link_local
+            or addr.is_private
+            or addr.is_reserved
+        )
     except ValueError:
         return False
 
@@ -190,12 +197,21 @@ def _is_private_ip(host: str) -> bool:
 def _ssrf_check(ifc_url: IfcUrl) -> None:
     """Raise HTTPException if the URL fails SSRF protection checks."""
     if ifc_url.transport == "local":
-        raise HTTPException(status_code=403, detail="Local file transport is not permitted in service mode")
+        raise HTTPException(
+            status_code=403,
+            detail="Local file transport is not permitted in service mode",
+        )
     if _allowed_hosts is not None:
         if ifc_url.host not in _allowed_hosts:
-            raise HTTPException(status_code=403, detail=f"Host {ifc_url.host!r} is not in the allowed-hosts list")
+            raise HTTPException(
+                status_code=403,
+                detail=f"Host {ifc_url.host!r} is not in the allowed-hosts list",
+            )
     elif _is_private_ip(ifc_url.host):
-        raise HTTPException(status_code=403, detail="Requests to private/loopback addresses are not permitted")
+        raise HTTPException(
+            status_code=403,
+            detail="Requests to private/loopback addresses are not permitted",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +272,7 @@ def _t3_put(hexsha: str, path: str, selector: str, guids: frozenset[str]) -> Non
 # Tier 4: sha256(url) → PNG (filesystem, immutable refs only, no expiry)
 # ---------------------------------------------------------------------------
 
+
 def _t4_path(url: str) -> Path:
     cache_dir = Path(user_cache_dir("ifcurl")) / "renders" / "immutable"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -307,6 +324,7 @@ def _t4m_put(url: str, png: bytes) -> None:
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
+
 
 class PreviewRequest(BaseModel):
     url: str
@@ -437,7 +455,9 @@ def preview(request: PreviewRequest) -> Response:
             ifc_url.visibility,
         )
     except SandboxCrashError as exc:
-        raise HTTPException(status_code=422, detail=f"IFC parse/render crashed: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"IFC parse/render crashed: {exc}"
+        ) from exc
     except SandboxTimeoutError as exc:
         raise HTTPException(status_code=503, detail=f"Render timed out: {exc}") from exc
     except ImportError as exc:
@@ -503,11 +523,17 @@ def bcf_export(request: BcfRequest) -> Response:
         try:
             guids = run_sandboxed(_sandboxed_select, ifc_bytes, ifc_url.selector)
         except SandboxCrashError as exc:
-            raise HTTPException(status_code=422, detail=f"IFC parse/select crashed: {exc}") from exc
+            raise HTTPException(
+                status_code=422, detail=f"IFC parse/select crashed: {exc}"
+            ) from exc
         except SandboxTimeoutError as exc:
-            raise HTTPException(status_code=503, detail=f"Select timed out: {exc}") from exc
+            raise HTTPException(
+                status_code=503, detail=f"Select timed out: {exc}"
+            ) from exc
         except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"Invalid selector: {exc}") from exc
+            raise HTTPException(
+                status_code=422, detail=f"Invalid selector: {exc}"
+            ) from exc
 
     bcf_bytes = build_bcf(
         camera=ifc_url.camera,
@@ -555,7 +581,9 @@ def render_diff(request: DiffRequest) -> Response:
 
     for label, ifc_url in (("base", base_url), ("head", head_url)):
         if ifc_url.path is None:
-            raise HTTPException(status_code=400, detail=f"{label} URL has no 'path' parameter")
+            raise HTTPException(
+                status_code=400, detail=f"{label} URL has no 'path' parameter"
+            )
 
     if base_url.path != head_url.path:
         raise HTTPException(
@@ -626,9 +654,13 @@ def render_diff(request: DiffRequest) -> Response:
             head_url.clips or [],
         )
     except SandboxCrashError as exc:
-        raise HTTPException(status_code=422, detail=f"IFC diff render crashed: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"IFC diff render crashed: {exc}"
+        ) from exc
     except SandboxTimeoutError as exc:
-        raise HTTPException(status_code=503, detail=f"Diff render timed out: {exc}") from exc
+        raise HTTPException(
+            status_code=503, detail=f"Diff render timed out: {exc}"
+        ) from exc
     except ImportError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:

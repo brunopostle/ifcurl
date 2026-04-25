@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from ifcurl.git import fetch_ifc, fetch_ifc_bytes
@@ -45,6 +47,7 @@ class TestFetchIfc:
 
     def test_branch_ref(self, local_ifc_repo):
         import git as gitpkg
+
         branch = gitpkg.Repo(local_ifc_repo["path"]).active_branch.name
         url = _local_url(local_ifc_repo["path"], ref=f"heads/{branch}")
         hexsha, data = fetch_ifc(url)
@@ -107,9 +110,10 @@ class TestInvalidRepo:
 from ifcurl.git import _dir_size, _evict_if_needed, _repo_cache_entries, _touch_cache
 
 
-def _make_fake_repo_cache(base: "Path", url: str, size_bytes: int = 1024) -> "Path":
+def _make_fake_repo_cache(base: Path, url: str, size_bytes: int = 1024) -> Path:
     """Create a fake cached-repo directory structure under *base*."""
     import hashlib
+
     key = hashlib.sha256(url.encode()).hexdigest()[:24]
     entry = base / key
     git_dir = entry / "repo.git"
@@ -128,6 +132,7 @@ class TestCacheHelpers:
 
     def test_touch_cache_updates_mtime(self, tmp_path):
         import time
+
         old_mtime = tmp_path.stat().st_mtime
         time.sleep(0.05)
         _touch_cache(tmp_path)
@@ -151,9 +156,13 @@ class TestCacheHelpers:
     def test_evict_removes_oldest_over_limit(self, tmp_path, monkeypatch):
         monkeypatch.setattr("ifcurl.git.user_cache_dir", lambda *a, **kw: str(tmp_path))
         monkeypatch.setenv("IFCURL_CACHE_MAX_GB", "0.000001")  # ~1 KB limit
-        old = _make_fake_repo_cache(tmp_path, "https://old.example.com/repo", size_bytes=512)
-        import time; time.sleep(0.05)
-        new = _make_fake_repo_cache(tmp_path, "https://new.example.com/repo", size_bytes=512)
+        old = _make_fake_repo_cache(
+            tmp_path, "https://old.example.com/repo", size_bytes=512
+        )
+        time.sleep(0.05)
+        new = _make_fake_repo_cache(
+            tmp_path, "https://new.example.com/repo", size_bytes=512
+        )
         _evict_if_needed()
         assert not old.exists()
         assert new.exists()

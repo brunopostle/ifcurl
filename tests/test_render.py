@@ -8,6 +8,7 @@ from ifcurl.render import render
 
 try:
     import pyvista  # noqa: F401
+
     HAS_PYVISTA = True
 except ImportError:
     HAS_PYVISTA = False
@@ -38,16 +39,26 @@ class TestRenderBasic:
         f = ifcopenshell.api.project.create_file()
         ifcopenshell.api.owner.settings.get_user = lambda ifc: None
         ifcopenshell.api.owner.settings.get_application = lambda ifc: None
-        project = ifcopenshell.api.root.create_entity(f, ifc_class="IfcProject", name="P")
+        project = ifcopenshell.api.root.create_entity(
+            f, ifc_class="IfcProject", name="P"
+        )
         ifcopenshell.api.unit.assign_unit(f)
         site = ifcopenshell.api.root.create_entity(f, ifc_class="IfcSite")
         building = ifcopenshell.api.root.create_entity(f, ifc_class="IfcBuilding")
         storey = ifcopenshell.api.root.create_entity(f, ifc_class="IfcBuildingStorey")
-        ifcopenshell.api.aggregate.assign_object(f, products=[site], relating_object=project)
-        ifcopenshell.api.aggregate.assign_object(f, products=[building], relating_object=site)
-        ifcopenshell.api.aggregate.assign_object(f, products=[storey], relating_object=building)
+        ifcopenshell.api.aggregate.assign_object(
+            f, products=[site], relating_object=project
+        )
+        ifcopenshell.api.aggregate.assign_object(
+            f, products=[building], relating_object=site
+        )
+        ifcopenshell.api.aggregate.assign_object(
+            f, products=[storey], relating_object=building
+        )
         wall = ifcopenshell.api.root.create_entity(f, ifc_class="IfcWall", name="W")
-        ifcopenshell.api.spatial.assign_container(f, products=[wall], relating_structure=storey)
+        ifcopenshell.api.spatial.assign_container(
+            f, products=[wall], relating_structure=storey
+        )
         with pytest.raises(ValueError, match="No renderable geometry"):
             render(f)
 
@@ -140,24 +151,34 @@ class TestRenderClips:
 class TestRenderVisibility:
     def test_highlight_mode(self, model_with_geometry):
         wall = model_with_geometry.by_type("IfcWall")[0]
-        result = render(model_with_geometry, element_ids=[wall.id()], visibility="highlight")
+        result = render(
+            model_with_geometry, element_ids=[wall.id()], visibility="highlight"
+        )
         assert result[:4] == PNG_MAGIC
 
     def test_ghost_mode(self, model_with_geometry):
         wall = model_with_geometry.by_type("IfcWall")[0]
-        result = render(model_with_geometry, element_ids=[wall.id()], visibility="ghost")
+        result = render(
+            model_with_geometry, element_ids=[wall.id()], visibility="ghost"
+        )
         assert result[:4] == PNG_MAGIC
 
     def test_isolate_mode(self, model_with_geometry):
         wall = model_with_geometry.by_type("IfcWall")[0]
-        result = render(model_with_geometry, element_ids=[wall.id()], visibility="isolate")
+        result = render(
+            model_with_geometry, element_ids=[wall.id()], visibility="isolate"
+        )
         assert result[:4] == PNG_MAGIC
 
     def test_visibility_modes_produce_different_images(self, model_with_geometry):
         wall = model_with_geometry.by_type("IfcWall")[0]
-        highlight = render(model_with_geometry, element_ids=[wall.id()], visibility="highlight")
+        highlight = render(
+            model_with_geometry, element_ids=[wall.id()], visibility="highlight"
+        )
         ghost = render(model_with_geometry, element_ids=[wall.id()], visibility="ghost")
-        isolate = render(model_with_geometry, element_ids=[wall.id()], visibility="isolate")
+        isolate = render(
+            model_with_geometry, element_ids=[wall.id()], visibility="isolate"
+        )
         # All three are valid PNG but should differ in content
         assert highlight[:4] == ghost[:4] == isolate[:4] == PNG_MAGIC
         assert len({highlight, ghost, isolate}) > 1

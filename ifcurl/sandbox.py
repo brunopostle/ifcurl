@@ -49,6 +49,7 @@ import os
 
 try:
     import resource as _resource
+
     _HAS_RESOURCE = True
 except ImportError:
     _HAS_RESOURCE = False  # Windows
@@ -70,14 +71,18 @@ class SandboxTimeoutError(SandboxError):
     """Child process exceeded the allowed wall-clock time."""
 
 
-def _worker(conn: multiprocessing.connection.Connection, fn, args: tuple, kwargs: dict) -> None:
+def _worker(
+    conn: multiprocessing.connection.Connection, fn, args: tuple, kwargs: dict
+) -> None:
     """Entry point for the sandboxed child process."""
     if _HAS_RESOURCE:
         if _SANDBOX_MEMORY_MB > 0:
             limit = _SANDBOX_MEMORY_MB * 1024 * 1024
             _resource.setrlimit(_resource.RLIMIT_AS, (limit, limit))
         if _SANDBOX_CPU_SECS > 0:
-            _resource.setrlimit(_resource.RLIMIT_CPU, (_SANDBOX_CPU_SECS, _SANDBOX_CPU_SECS))
+            _resource.setrlimit(
+                _resource.RLIMIT_CPU, (_SANDBOX_CPU_SECS, _SANDBOX_CPU_SECS)
+            )
 
     try:
         result = fn(*args, **kwargs)
@@ -123,8 +128,14 @@ def run_sandboxed(fn, *args, timeout: int = _SANDBOX_TIMEOUT, **kwargs):
     except EOFError:
         parent_conn.close()
         proc.join()
-        sig = -proc.exitcode if (proc.exitcode is not None and proc.exitcode < 0) else proc.exitcode
-        raise SandboxCrashError(f"Subprocess terminated without sending result (exit {sig})")
+        sig = (
+            -proc.exitcode
+            if (proc.exitcode is not None and proc.exitcode < 0)
+            else proc.exitcode
+        )
+        raise SandboxCrashError(
+            f"Subprocess terminated without sending result (exit {sig})"
+        )
 
     parent_conn.close()
     proc.join()

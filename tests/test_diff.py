@@ -6,7 +6,6 @@ import pytest
 
 from ifcurl.diff import expand_step_ids, step_ids_from_diff
 
-
 # ---------------------------------------------------------------------------
 # step_ids_from_diff
 # ---------------------------------------------------------------------------
@@ -59,7 +58,11 @@ class TestStepIdsFromDiff:
     def test_context_lines_ignored(self):
         diff = " #5=IFCSITE('site');\n"
         ids = step_ids_from_diff(diff)
-        assert 5 not in ids["added"] and 5 not in ids["removed"] and 5 not in ids["modified"]
+        assert (
+            5 not in ids["added"]
+            and 5 not in ids["removed"]
+            and 5 not in ids["modified"]
+        )
 
     def test_git_header_lines_ignored(self):
         diff = "--- a/model.ifc\n+++ b/model.ifc\n"

@@ -67,7 +67,9 @@ def fetch_ifc(ifc_url: IfcUrl, token: str | None = None) -> tuple[str, bytes]:
         reached, or the file is not found at the specified ref.
     """
     if not _HAS_GITPYTHON:
-        raise ImportError("GitPython is not installed.  Install with: pip install gitpython")
+        raise ImportError(
+            "GitPython is not installed.  Install with: pip install gitpython"
+        )
     if ifc_url.path is None:
         raise ValueError("URL has no 'path' parameter — cannot fetch IFC file")
 
@@ -90,7 +92,9 @@ def diff_text(base_url: IfcUrl, head_url: IfcUrl, token: str | None = None) -> s
         cannot be produced.
     """
     if not _HAS_GITPYTHON:
-        raise ImportError("GitPython is not installed.  Install with: pip install gitpython")
+        raise ImportError(
+            "GitPython is not installed.  Install with: pip install gitpython"
+        )
     if base_url.path is None or head_url.path is None:
         raise ValueError("Both URLs must have a 'path' parameter")
     if base_url.path != head_url.path:
@@ -156,7 +160,7 @@ def _get_max_cache_bytes() -> int | None:
     if val is None:
         return None
     try:
-        return int(float(val) * 1024 ** 3)
+        return int(float(val) * 1024**3)
     except (ValueError, OverflowError):
         return None
 
@@ -232,8 +236,11 @@ def _cache_dir_for(remote_url: str) -> Path:
 
 def _auth_url(remote_url: str, token: str | None) -> str:
     """Return *remote_url* with the token injected, or the original URL."""
-    if token and (remote_url.startswith("https://") or remote_url.startswith("http://")):
+    if token and (
+        remote_url.startswith("https://") or remote_url.startswith("http://")
+    ):
         from ifcurl.auth import inject_token
+
         return inject_token(remote_url, token)
     return remote_url
 
@@ -258,10 +265,14 @@ def _clone_bare(auth_url: str, git_dir: Path, remote_url: str) -> git.Repo:
                 return git.Repo.clone_from(fallback, str(git_dir), bare=True)
             except git.exc.GitCommandError:
                 pass  # report the original error
-        raise ValueError(f"Failed to clone {remote_url!r}: {exc.stderr.strip()}") from exc
+        raise ValueError(
+            f"Failed to clone {remote_url!r}: {exc.stderr.strip()}"
+        ) from exc
 
 
-def _open_remote(remote_url: str, is_mutable: bool, token: str | None = None) -> git.Repo:
+def _open_remote(
+    remote_url: str, is_mutable: bool, token: str | None = None
+) -> git.Repo:
     """Return a GitPython Repo for *remote_url*, cloning it if necessary.
 
     Bare clones are stored under the OS cache dir keyed on the clean URL.
@@ -309,7 +320,9 @@ def _open_remote(remote_url: str, is_mutable: bool, token: str | None = None) ->
     return repo
 
 
-def _read_commit_blob(repo: git.Repo, git_ref: str, file_path: str) -> tuple[str, bytes]:
+def _read_commit_blob(
+    repo: git.Repo, git_ref: str, file_path: str
+) -> tuple[str, bytes]:
     """Return ``(commit_hexsha, bytes)`` for *file_path* at *git_ref* in *repo*."""
     try:
         commit = repo.commit(git_ref)

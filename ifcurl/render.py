@@ -58,8 +58,10 @@ except (ImportError, AttributeError):
     _HAS_PYVISTA = False
 
 try:
-    from PIL import Image as _PILImage
     import io as _io
+
+    from PIL import Image as _PILImage
+
     _HAS_PIL = True
 except ImportError:
     _HAS_PIL = False
@@ -114,10 +116,16 @@ def _build_geom_settings(model: ifcopenshell.file) -> ifcopenshell.geom.settings
     settings.set("use-world-coords", True)
 
     clearance_ids = {
-        c.id() for c in model.by_type("IfcGeometricRepresentationSubContext") if c.ContextIdentifier == "Clearance"
+        c.id()
+        for c in model.by_type("IfcGeometricRepresentationSubContext")
+        if c.ContextIdentifier == "Clearance"
     }
     if clearance_ids:
-        ctx_ids = [c.id() for c in model.by_type("IfcGeometricRepresentationContext") if c.id() not in clearance_ids]
+        ctx_ids = [
+            c.id()
+            for c in model.by_type("IfcGeometricRepresentationContext")
+            if c.id() not in clearance_ids
+        ]
         if ctx_ids:
             settings.set("context-ids", ctx_ids)
 
@@ -173,7 +181,12 @@ def _add_shape(
 
     is_selected = selection_ids is not None and shape.product.id() in selection_ids
 
-    if diff_ids is None and visibility == "isolate" and selection_ids is not None and not is_selected:
+    if (
+        diff_ids is None
+        and visibility == "isolate"
+        and selection_ids is not None
+        and not is_selected
+    ):
         return
 
     for midx, mat in enumerate(geom.materials):
@@ -182,7 +195,9 @@ def _add_shape(
             continue
 
         sub_faces = faces[tri_mask]
-        faces_pv = np.hstack([np.full((sub_faces.shape[0], 1), 3, dtype=int), sub_faces]).ravel()
+        faces_pv = np.hstack(
+            [np.full((sub_faces.shape[0], 1), 3, dtype=int), sub_faces]
+        ).ravel()
         mesh = pv.PolyData(verts, faces_pv)
 
         # Apply clipping planes — spec: normal points toward the visible side
@@ -260,7 +275,14 @@ def _render_iterator(
 
     while True:
         try:
-            _add_shape(iterator.get(), plotter, frozen_ids, visibility, clips, diff_ids=diff_ids)
+            _add_shape(
+                iterator.get(),
+                plotter,
+                frozen_ids,
+                visibility,
+                clips,
+                diff_ids=diff_ids,
+            )
         except Exception:
             pass  # skip broken shapes, keep rendering the rest
         if not iterator.next():
@@ -290,7 +312,9 @@ def _get_occurrence_class(type_entity: object) -> str:
     return "IfcBuildingElementProxy"
 
 
-def _make_type_occurrence(model: ifcopenshell.file, type_entity: object) -> object | None:
+def _make_type_occurrence(
+    model: ifcopenshell.file, type_entity: object
+) -> object | None:
     rep_maps = getattr(type_entity, "RepresentationMaps", None) or []
     if not rep_maps:
         return None
@@ -298,8 +322,14 @@ def _make_type_occurrence(model: ifcopenshell.file, type_entity: object) -> obje
     mapped_items = []
     for rep_map in rep_maps:
         origin = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0))
-        transform = model.create_entity("IfcCartesianTransformationOperator3D", LocalOrigin=origin)
-        mapped_items.append(model.create_entity("IfcMappedItem", MappingSource=rep_map, MappingTarget=transform))
+        transform = model.create_entity(
+            "IfcCartesianTransformationOperator3D", LocalOrigin=origin
+        )
+        mapped_items.append(
+            model.create_entity(
+                "IfcMappedItem", MappingSource=rep_map, MappingTarget=transform
+            )
+        )
 
     context = rep_maps[0].MappedRepresentation.ContextOfItems
     shape_rep = model.create_entity(
@@ -309,14 +339,18 @@ def _make_type_occurrence(model: ifcopenshell.file, type_entity: object) -> obje
         RepresentationType="MappedRepresentation",
         Items=mapped_items,
     )
-    prod_def = model.create_entity("IfcProductDefinitionShape", Representations=[shape_rep])
+    prod_def = model.create_entity(
+        "IfcProductDefinitionShape", Representations=[shape_rep]
+    )
 
     pt = model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0))
     axis2 = model.create_entity(
         "IfcAxis2Placement3D",
         Location=pt,
         Axis=model.create_entity("IfcDirection", DirectionRatios=(0.0, 0.0, 1.0)),
-        RefDirection=model.create_entity("IfcDirection", DirectionRatios=(1.0, 0.0, 0.0)),
+        RefDirection=model.create_entity(
+            "IfcDirection", DirectionRatios=(1.0, 0.0, 0.0)
+        ),
     )
     placement = model.create_entity("IfcLocalPlacement", RelativePlacement=axis2)
 
@@ -372,7 +406,9 @@ def _render_with_types(
             include.extend(tmp.by_id(e.id()) for e in selector_elements)
 
         settings = _build_geom_settings(tmp)
-        iterator = ifcopenshell.geom.iterator(settings, tmp, _WORKER_COUNT, include=include)
+        iterator = ifcopenshell.geom.iterator(
+            settings, tmp, _WORKER_COUNT, include=include
+        )
         if not iterator.initialize():
             raise ValueError("Type entities have no renderable geometry")
 
@@ -387,7 +423,9 @@ def _render_with_types(
                 else:
                     new_highlight.append(hid)
 
-        return _render_iterator(iterator, new_highlight, visibility, clips, camera, fov, scale)
+        return _render_iterator(
+            iterator, new_highlight, visibility, clips, camera, fov, scale
+        )
     finally:
         try:
             os.unlink(tmp_path)
@@ -404,7 +442,9 @@ def render(
     model: ifcopenshell.file,
     selector: str | None = None,
     element_ids: list[int] | None = None,
-    camera: tuple[float, float, float, float, float, float, float, float, float] | None = None,
+    camera: (
+        tuple[float, float, float, float, float, float, float, float, float] | None
+    ) = None,
     fov: float | None = None,
     scale: float | None = None,
     clips: list[tuple[float, float, float, float, float, float]] | None = None,
@@ -434,7 +474,9 @@ def render(
         renderable geometry.
     """
     if not _HAS_PYVISTA:
-        raise ImportError("pyvista and numpy are required for rendering.  Install with: pip install pyvista numpy")
+        raise ImportError(
+            "pyvista and numpy are required for rendering.  Install with: pip install pyvista numpy"
+        )
 
     clips = clips or []
 
@@ -444,7 +486,9 @@ def render(
         if not matched:
             raise ValueError(f"Selector {selector!r} matched no elements")
         types = [e for e in matched if e.is_a("IfcTypeProduct")]
-        selector_elements: list | None = [e for e in matched if not e.is_a("IfcTypeProduct")]
+        selector_elements: list | None = [
+            e for e in matched if not e.is_a("IfcTypeProduct")
+        ]
     else:
         types = []
         selector_elements = None
@@ -469,8 +513,16 @@ def render(
     # --- Delegate to temp-copy path when any type entities are involved ---
     if types:
         return _render_with_types(
-            model, types, selector_elements, selection_ids, type_highlight_ids,
-            visibility, clips, camera, fov, scale,
+            model,
+            types,
+            selector_elements,
+            selection_ids,
+            type_highlight_ids,
+            visibility,
+            clips,
+            camera,
+            fov,
+            scale,
         )
 
     # --- Regular element rendering ---
@@ -486,14 +538,18 @@ def render(
     else:
         exclude = list(model.by_type("IfcOpeningElement"))
         iterator = ifcopenshell.geom.iterator(
-            settings, model, _WORKER_COUNT,
+            settings,
+            model,
+            _WORKER_COUNT,
             exclude=exclude if exclude else None,
         )
 
     if not iterator.initialize():
         raise ValueError("No renderable geometry found")
 
-    return _render_iterator(iterator, selection_ids, visibility, clips, camera, fov, scale)
+    return _render_iterator(
+        iterator, selection_ids, visibility, clips, camera, fov, scale
+    )
 
 
 def _entity_bounds(model: ifcopenshell.file, entities: list) -> list[float] | None:
@@ -517,9 +573,14 @@ def _entity_bounds(model: ifcopenshell.file, entities: list) -> list[float] | No
     if not all_verts:
         return None
     v = np.vstack(all_verts)
-    return [float(v[:, 0].min()), float(v[:, 0].max()),
-            float(v[:, 1].min()), float(v[:, 1].max()),
-            float(v[:, 2].min()), float(v[:, 2].max())]
+    return [
+        float(v[:, 0].min()),
+        float(v[:, 0].max()),
+        float(v[:, 1].min()),
+        float(v[:, 1].max()),
+        float(v[:, 2].min()),
+        float(v[:, 2].max()),
+    ]
 
 
 def _merge_bounds(a: list[float] | None, b: list[float] | None) -> list[float] | None:
@@ -528,16 +589,23 @@ def _merge_bounds(a: list[float] | None, b: list[float] | None) -> list[float] |
         return b
     if b is None:
         return a
-    return [min(a[0], b[0]), max(a[1], b[1]),
-            min(a[2], b[2]), max(a[3], b[3]),
-            min(a[4], b[4]), max(a[5], b[5])]
+    return [
+        min(a[0], b[0]),
+        max(a[1], b[1]),
+        min(a[2], b[2]),
+        max(a[3], b[3]),
+        min(a[4], b[4]),
+        max(a[5], b[5]),
+    ]
 
 
 def render_diff(
     model_head: ifcopenshell.file,
     model_base: ifcopenshell.file,
     diff_ids: dict[str, set[int]],
-    camera: tuple[float, float, float, float, float, float, float, float, float] | None = None,
+    camera: (
+        tuple[float, float, float, float, float, float, float, float, float] | None
+    ) = None,
     fov: float | None = None,
     scale: float | None = None,
     clips: list[tuple[float, float, float, float, float, float]] | None = None,
@@ -569,9 +637,13 @@ def render_diff(
     :raises ValueError: If the head model has no renderable geometry.
     """
     if not _HAS_PYVISTA:
-        raise ImportError("pyvista and numpy are required for rendering.  Install with: pip install pyvista numpy")
+        raise ImportError(
+            "pyvista and numpy are required for rendering.  Install with: pip install pyvista numpy"
+        )
     if not _HAS_PIL:
-        raise ImportError("Pillow is required for diff rendering.  Install with: pip install Pillow")
+        raise ImportError(
+            "Pillow is required for diff rendering.  Install with: pip install Pillow"
+        )
 
     clips = clips or []
 
@@ -595,7 +667,9 @@ def render_diff(
     # Both are fast because they operate on small subsets.
     # ------------------------------------------------------------------
     if camera is None:
-        changed_head_ids = frozen_diff.get("added", frozenset()) | frozen_diff.get("modified", frozenset())
+        changed_head_ids = frozen_diff.get("added", frozenset()) | frozen_diff.get(
+            "modified", frozenset()
+        )
         changed_head_entities = []
         for eid in changed_head_ids:
             try:
@@ -615,7 +689,9 @@ def render_diff(
     settings_head = _build_geom_settings(model_head)
     exclude_head = list(model_head.by_type("IfcOpeningElement"))
     iterator_head = ifcopenshell.geom.iterator(
-        settings_head, model_head, _WORKER_COUNT,
+        settings_head,
+        model_head,
+        _WORKER_COUNT,
         exclude=exclude_head if exclude_head else None,
     )
     if not iterator_head.initialize():
@@ -626,7 +702,14 @@ def render_diff(
 
     while True:
         try:
-            _add_shape(iterator_head.get(), plotter1, None, "highlight", clips, diff_ids=frozen_diff)
+            _add_shape(
+                iterator_head.get(),
+                plotter1,
+                None,
+                "highlight",
+                clips,
+                diff_ids=frozen_diff,
+            )
         except Exception:
             pass
         if not iterator_head.next():
@@ -671,14 +754,25 @@ def render_diff(
     if not iterator_base.initialize():
         return pass1_png
 
-    removed_diff = {"added": frozenset(), "modified": frozenset(), "removed": frozenset(removed_ids)}
+    removed_diff = {
+        "added": frozenset(),
+        "modified": frozenset(),
+        "removed": frozenset(removed_ids),
+    }
 
     plotter2 = _Plotter(off_screen=True, window_size=(1280, 960))
     plotter2.background_color = "white"
 
     while True:
         try:
-            _add_shape(iterator_base.get(), plotter2, None, "highlight", clips, diff_ids=removed_diff)
+            _add_shape(
+                iterator_base.get(),
+                plotter2,
+                None,
+                "highlight",
+                clips,
+                diff_ids=removed_diff,
+            )
         except Exception:
             pass
         if not iterator_base.next():

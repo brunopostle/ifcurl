@@ -89,7 +89,10 @@ def main() -> None:
     )
     render_parser.add_argument("url", help="The ifc:// URL to render")
     render_parser.add_argument(
-        "-o", "--output", default="", metavar="FILE",
+        "-o",
+        "--output",
+        default="",
+        metavar="FILE",
         help="Output PNG path (default: ifc-url-render.png)",
     )
 
@@ -98,16 +101,22 @@ def main() -> None:
         help="Start the ifcurl preview HTTP service",
         description=(
             "Start an HTTP service that renders ifc:// URLs to PNG images on demand.\n"
-            "Accepts POST /preview with a JSON body {\"url\": \"ifc://...\"} and returns image/png.\n"
+            'Accepts POST /preview with a JSON body {"url": "ifc://..."} and returns image/png.\n'
             "Results are cached: mutable refs (branches, HEAD) are cached in memory;\n"
             "immutable refs (commit hashes, tags) are also cached to disk."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    serve_parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
     serve_parser.add_argument(
-        "--allowed-hosts", default="", metavar="HOSTS",
+        "--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)"
+    )
+    serve_parser.add_argument(
+        "--port", type=int, default=8000, help="Bind port (default: 8000)"
+    )
+    serve_parser.add_argument(
+        "--allowed-hosts",
+        default="",
+        metavar="HOSTS",
         help=(
             "Comma-separated list of git hostnames (with optional :port) the service "
             "is permitted to fetch from, e.g. 'github.com,gitlab.example.com:3000'. "
@@ -127,14 +136,19 @@ def main() -> None:
     )
     cache_sub = cache_parser.add_subparsers(dest="cache_cmd")
 
-    cache_sub.add_parser("list", help="Show cached repos with size and last-access time")
+    cache_sub.add_parser(
+        "list", help="Show cached repos with size and last-access time"
+    )
 
     prune_parser = cache_sub.add_parser(
         "prune",
         help="Remove oldest repos until cache is under the size limit",
     )
     prune_parser.add_argument(
-        "--max-gb", type=float, default=None, metavar="GB",
+        "--max-gb",
+        type=float,
+        default=None,
+        metavar="GB",
         help=(
             "Maximum total cache size in GB.  Defaults to IFCURL_CACHE_MAX_GB "
             "environment variable; required if that is not set."
@@ -247,10 +261,10 @@ def _cmd_cache(args: argparse.Namespace) -> None:
         total = 0
         for atime, size, cache_dir, url in entries:
             dt = datetime.datetime.fromtimestamp(atime).strftime("%Y-%m-%d %H:%M")
-            mb = size / (1024 ** 2)
+            mb = size / (1024**2)
             total += size
             print(f"  {url:<55}  {mb:>7.1f} MB  {dt}")
-        total_mb = total / (1024 ** 2)
+        total_mb = total / (1024**2)
         max_bytes = _get_max_cache_bytes()
         limit_str = f"  limit: {max_bytes / (1024**3):.1f} GB" if max_bytes else ""
         print(f"Total: {total_mb:.1f} MB  ({len(entries)} repos){limit_str}")
@@ -261,14 +275,17 @@ def _cmd_cache(args: argparse.Namespace) -> None:
             if os.environ.get("IFCURL_CACHE_MAX_GB"):
                 max_gb = float(os.environ["IFCURL_CACHE_MAX_GB"])
             else:
-                print("Error: --max-gb is required when IFCURL_CACHE_MAX_GB is not set", file=sys.stderr)
+                print(
+                    "Error: --max-gb is required when IFCURL_CACHE_MAX_GB is not set",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
         os.environ["IFCURL_CACHE_MAX_GB"] = str(max_gb)
         before = sum(s for _, s, _, _ in _repo_cache_entries())
         _evict_if_needed()
         after = sum(s for _, s, _, _ in _repo_cache_entries())
-        freed = (before - after) / (1024 ** 2)
-        remaining = after / (1024 ** 2)
+        freed = (before - after) / (1024**2)
+        remaining = after / (1024**2)
         print(f"Freed {freed:.1f} MB — {remaining:.1f} MB remaining.")
 
     elif args.cache_cmd == "clear":

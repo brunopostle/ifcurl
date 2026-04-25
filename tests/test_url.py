@@ -103,7 +103,9 @@ def test_selector():
 
 
 def test_selector_percent_encoded():
-    url = IfcUrl.parse("ifc://example.com/org/repo@HEAD?path=m.ifc&selector=IfcWall%2C%2BName%3D%22X%22")
+    url = IfcUrl.parse(
+        "ifc://example.com/org/repo@HEAD?path=m.ifc&selector=IfcWall%2C%2BName%3D%22X%22"
+    )
     assert url.selector == 'IfcWall,+Name="X"'
 
 
@@ -218,7 +220,9 @@ def test_immutable_tag():
 
 
 def test_spec_example_default_view():
-    url = IfcUrl.parse("ifc://example.com/org/project@heads/main?path=models/building.ifc")
+    url = IfcUrl.parse(
+        "ifc://example.com/org/project@heads/main?path=models/building.ifc"
+    )
     assert url.transport == "https"
     assert url.ref == "heads/main"
     assert url.path == "models/building.ifc"
@@ -228,10 +232,10 @@ def test_spec_example_default_view():
 
 def test_spec_example_perspective():
     url = IfcUrl.parse(
-        'ifc://git@example.com/org/project@abc123def'
-        '?path=models/building.ifc'
-        '&selector=IfcWall%2C%2BName%3D%22Core%2BWall%22'
-        '&camera=10,20,5,0,-1,0,0,0,1&fov=60&visibility=ghost'
+        "ifc://git@example.com/org/project@abc123def"
+        "?path=models/building.ifc"
+        "&selector=IfcWall%2C%2BName%3D%22Core%2BWall%22"
+        "&camera=10,20,5,0,-1,0,0,0,1&fov=60&visibility=ghost"
     )
     assert url.transport == "ssh"
     assert url.fov == 60.0

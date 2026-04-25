@@ -19,8 +19,12 @@ import pytest
 
 
 def _suppress_owner(f):
-    ifcopenshell.api.owner.settings.get_user = lambda ifc: (ifc.by_type("IfcPersonAndOrganization") or [None])[0]
-    ifcopenshell.api.owner.settings.get_application = lambda ifc: (ifc.by_type("IfcApplication") or [None])[0]
+    ifcopenshell.api.owner.settings.get_user = lambda ifc: (
+        ifc.by_type("IfcPersonAndOrganization") or [None]
+    )[0]
+    ifcopenshell.api.owner.settings.get_application = lambda ifc: (
+        ifc.by_type("IfcApplication") or [None]
+    )[0]
     return f
 
 
@@ -30,32 +34,59 @@ def model_with_geometry():
     f = ifcopenshell.api.project.create_file()
     _suppress_owner(f)
 
-    project = ifcopenshell.api.root.create_entity(f, ifc_class="IfcProject", name="TestProject")
+    project = ifcopenshell.api.root.create_entity(
+        f, ifc_class="IfcProject", name="TestProject"
+    )
     ifcopenshell.api.unit.assign_unit(f)
 
     site = ifcopenshell.api.root.create_entity(f, ifc_class="IfcSite", name="TestSite")
-    building = ifcopenshell.api.root.create_entity(f, ifc_class="IfcBuilding", name="TestBuilding")
-    storey = ifcopenshell.api.root.create_entity(f, ifc_class="IfcBuildingStorey", name="Ground Floor")
+    building = ifcopenshell.api.root.create_entity(
+        f, ifc_class="IfcBuilding", name="TestBuilding"
+    )
+    storey = ifcopenshell.api.root.create_entity(
+        f, ifc_class="IfcBuildingStorey", name="Ground Floor"
+    )
 
-    ifcopenshell.api.aggregate.assign_object(f, products=[site], relating_object=project)
-    ifcopenshell.api.aggregate.assign_object(f, products=[building], relating_object=site)
-    ifcopenshell.api.aggregate.assign_object(f, products=[storey], relating_object=building)
+    ifcopenshell.api.aggregate.assign_object(
+        f, products=[site], relating_object=project
+    )
+    ifcopenshell.api.aggregate.assign_object(
+        f, products=[building], relating_object=site
+    )
+    ifcopenshell.api.aggregate.assign_object(
+        f, products=[storey], relating_object=building
+    )
 
     model_ctx = ifcopenshell.api.context.add_context(f, context_type="Model")
     body = ifcopenshell.api.context.add_context(
-        f, context_type="Model", context_identifier="Body",
-        target_view="MODEL_VIEW", parent=model_ctx,
+        f,
+        context_type="Model",
+        context_identifier="Body",
+        target_view="MODEL_VIEW",
+        parent=model_ctx,
     )
 
     wall1 = ifcopenshell.api.root.create_entity(f, ifc_class="IfcWall", name="Wall001")
-    rep1 = ifcopenshell.api.geometry.add_wall_representation(f, context=body, length=5, height=3, thickness=0.2)
-    ifcopenshell.api.geometry.assign_representation(f, product=wall1, representation=rep1)
-    ifcopenshell.api.spatial.assign_container(f, products=[wall1], relating_structure=storey)
+    rep1 = ifcopenshell.api.geometry.add_wall_representation(
+        f, context=body, length=5, height=3, thickness=0.2
+    )
+    ifcopenshell.api.geometry.assign_representation(
+        f, product=wall1, representation=rep1
+    )
+    ifcopenshell.api.spatial.assign_container(
+        f, products=[wall1], relating_structure=storey
+    )
 
     wall2 = ifcopenshell.api.root.create_entity(f, ifc_class="IfcWall", name="Wall002")
-    rep2 = ifcopenshell.api.geometry.add_wall_representation(f, context=body, length=4, height=3, thickness=0.2)
-    ifcopenshell.api.geometry.assign_representation(f, product=wall2, representation=rep2)
-    ifcopenshell.api.spatial.assign_container(f, products=[wall2], relating_structure=storey)
+    rep2 = ifcopenshell.api.geometry.add_wall_representation(
+        f, context=body, length=4, height=3, thickness=0.2
+    )
+    ifcopenshell.api.geometry.assign_representation(
+        f, product=wall2, representation=rep2
+    )
+    ifcopenshell.api.spatial.assign_container(
+        f, products=[wall2], relating_structure=storey
+    )
     matrix = np.eye(4)
     matrix[1, 3] = 3.0
     ifcopenshell.api.geometry.edit_object_placement(f, product=wall2, matrix=matrix)

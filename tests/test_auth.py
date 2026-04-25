@@ -23,7 +23,9 @@ class TestGetTokenForHost:
         assert get_token_for_host("gitlab.com") is None
 
     def test_returns_none_when_file_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("ifcurl.auth.config_path", lambda: tmp_path / "nonexistent.json")
+        monkeypatch.setattr(
+            "ifcurl.auth.config_path", lambda: tmp_path / "nonexistent.json"
+        )
         assert get_token_for_host("github.com") is None
 
     def test_returns_none_on_malformed_json(self, tmp_path, monkeypatch):
@@ -40,12 +42,16 @@ class TestGetTokenForHost:
 
     def test_multiple_hosts(self, tmp_path, monkeypatch):
         config = tmp_path / "tokens.json"
-        config.write_text(json.dumps({
-            "hosts": {
-                "github.com": "ghp_token",
-                "gitlab.example.com": "glpat_token",
-            }
-        }))
+        config.write_text(
+            json.dumps(
+                {
+                    "hosts": {
+                        "github.com": "ghp_token",
+                        "gitlab.example.com": "glpat_token",
+                    }
+                }
+            )
+        )
         monkeypatch.setattr("ifcurl.auth.config_path", lambda: config)
         assert get_token_for_host("github.com") == "ghp_token"
         assert get_token_for_host("gitlab.example.com") == "glpat_token"

@@ -77,7 +77,7 @@ def step_ids_from_diff(diff_text: str) -> DiffIds:
     }
 
 
-def expand_step_ids(model: "ifcopenshell.file", step_ids: DiffIds) -> DiffIds:
+def expand_step_ids(model: ifcopenshell.file, step_ids: DiffIds) -> DiffIds:
     """Propagate changed step IDs to the IfcProduct entities that own them.
 
     :param model: The *head* (newer) model, used to walk IFC relationships.
