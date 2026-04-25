@@ -496,6 +496,43 @@ def render(
     return _render_iterator(iterator, selection_ids, visibility, clips, camera, fov, scale)
 
 
+def _entity_bounds(model: ifcopenshell.file, entities: list) -> list[float] | None:
+    """Return [xmin,xmax,ymin,ymax,zmin,zmax] for *entities* in world coords, or None."""
+    if not entities:
+        return None
+    settings = _build_geom_settings(model)
+    it = ifcopenshell.geom.iterator(settings, model, _WORKER_COUNT, include=entities)
+    if not it.initialize():
+        return None
+    all_verts: list[np.ndarray] = []
+    while True:
+        try:
+            v = np.array(it.get().geometry.verts, dtype=float).reshape(-1, 3)
+            if v.size > 0:
+                all_verts.append(v)
+        except Exception:
+            pass
+        if not it.next():
+            break
+    if not all_verts:
+        return None
+    v = np.vstack(all_verts)
+    return [float(v[:, 0].min()), float(v[:, 0].max()),
+            float(v[:, 1].min()), float(v[:, 1].max()),
+            float(v[:, 2].min()), float(v[:, 2].max())]
+
+
+def _merge_bounds(a: list[float] | None, b: list[float] | None) -> list[float] | None:
+    """Merge two [xmin,xmax,ymin,ymax,zmin,zmax] extents, either may be None."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return [min(a[0], b[0]), max(a[1], b[1]),
+            min(a[2], b[2]), max(a[3], b[3]),
+            min(a[4], b[4]), max(a[5], b[5])]
+
+
 def render_diff(
     model_head: ifcopenshell.file,
     model_base: ifcopenshell.file,
@@ -541,6 +578,38 @@ def render_diff(
     frozen_diff = {k: frozenset(v) for k, v in diff_ids.items()}
 
     # ------------------------------------------------------------------
+    # Pre-compute removed entities (needed for bounds and pass 2)
+    # ------------------------------------------------------------------
+    removed_ids = diff_ids.get("removed", set())
+    removed_entities = []
+    for eid in removed_ids:
+        try:
+            removed_entities.append(model_base.by_id(eid))
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Pre-compute bounding box of all changed elements for camera fitting.
+    # added/modified bounds come from a subset iterator on the head model;
+    # removed bounds come from a subset iterator on the base model.
+    # Both are fast because they operate on small subsets.
+    # ------------------------------------------------------------------
+    if camera is None:
+        changed_head_ids = frozen_diff.get("added", frozenset()) | frozen_diff.get("modified", frozenset())
+        changed_head_entities = []
+        for eid in changed_head_ids:
+            try:
+                changed_head_entities.append(model_head.by_id(eid))
+            except Exception:
+                pass
+        diff_bounds = _merge_bounds(
+            _entity_bounds(model_head, changed_head_entities),
+            _entity_bounds(model_base, removed_entities),
+        )
+    else:
+        diff_bounds = None
+
+    # ------------------------------------------------------------------
     # Pass 1: head model — full scene with diff colouring
     # ------------------------------------------------------------------
     settings_head = _build_geom_settings(model_head)
@@ -565,6 +634,12 @@ def render_diff(
 
     if camera is not None:
         _apply_camera(plotter1, camera, fov, scale)
+    elif diff_bounds is not None:
+        plotter1.reset_camera(bounds=diff_bounds)
+        plotter1.camera.up = (0, 0, 1)
+        if scale is not None:
+            plotter1.camera.parallel_projection = True
+            plotter1.camera.parallel_scale = scale
     else:
         plotter1.reset_camera()
         plotter1.camera.up = (0, 0, 1)
@@ -586,16 +661,6 @@ def render_diff(
     # Pass 2: base model — removed elements only, in red.
     # Apply the same camera that pass 1 used.
     # ------------------------------------------------------------------
-    removed_ids = diff_ids.get("removed", set())
-    if not removed_ids:
-        return pass1_png
-
-    removed_entities = []
-    for eid in removed_ids:
-        try:
-            removed_entities.append(model_base.by_id(eid))
-        except Exception:
-            pass
     if not removed_entities:
         return pass1_png
 
