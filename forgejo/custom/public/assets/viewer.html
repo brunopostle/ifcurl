@@ -50,6 +50,12 @@
     .tb-btn:hover { background: rgba(255,255,255,0.14); }
     .tb-btn.active { color: #a8c8ff; background: rgba(80,120,255,0.2);
                      border-color: rgba(80,120,255,0.5); }
+    #ref-badge {
+      font-size: 10px; color: #f0a050; font-family: monospace;
+      background: rgba(255,160,80,0.12); border: 1px solid rgba(255,160,80,0.3);
+      border-radius: 4px; padding: 2px 6px; white-space: nowrap; flex-shrink: 0;
+      cursor: default;
+    }
     /* BCF panel */
     #bcf-comment { flex: 3; }
     #bcf-title   { flex: 2; }
@@ -127,6 +133,8 @@
         <input id="ref-input" class="ti" type="text"
                placeholder="heads/main or commit hash" spellcheck="false">
       </div>
+      <span id="ref-badge" style="display:none" title="Pinned to this commit — not tracking branch tip"></span>
+      <button id="ref-switch-btn" class="tb-btn" style="display:none"></button>
       <div class="field" style="flex:2">
         <label>path</label>
         <input id="path-input" class="ti" type="text"
@@ -228,6 +236,29 @@
       selectorInput.value = parsed.selector;
     }
     urlInput.value = ifcUrl;
+
+    // Show commit-pin indicator when the ref is a bare commit hash.
+    const refBadge     = document.getElementById("ref-badge");
+    const refSwitchBtn = document.getElementById("ref-switch-btn");
+    if (parsed && isCommitHash(parsed.ref)) {
+      refBadge.textContent = parsed.ref.slice(0, 7);
+      refBadge.style.display = "";
+      if (parsed.host && parsed.repoSuffix) {
+        fetchBranchForCommit(parsed.host, parsed.repoSuffix, parsed.ref)
+          .then(branchName => {
+            const targetRef = `heads/${branchName}`;
+            refSwitchBtn.textContent = `→ ${targetRef}`;
+            refSwitchBtn.style.display = "";
+            refSwitchBtn.addEventListener("click", () => {
+              const qI = ifcUrl.indexOf("?");
+              const base = qI < 0 ? ifcUrl : ifcUrl.slice(0, qI);
+              const tail = qI < 0 ? "" : ifcUrl.slice(qI);
+              loadUrl(base.slice(0, base.lastIndexOf("@") + 1) + targetRef + tail);
+            });
+          })
+          .catch(() => { /* silent — badge alone is sufficient */ });
+      }
+    }
 
     // -----------------------------------------------------------------------
     // Navigate to the viewer with a different ifc:// URL.
@@ -800,6 +831,39 @@
       propsName.textContent = props.Name?.value ?? props.LongName?.value ?? "";
       propsGuid.textContent = props.GlobalId?.value ?? "";
       propsPanel.style.display = "";
+    }
+
+    // -----------------------------------------------------------------------
+    // Commit-pin indicator helpers.
+    // -----------------------------------------------------------------------
+    function isCommitHash(ref) {
+      return /^[0-9a-f]{7,40}$/.test(ref);
+    }
+
+    async function fetchBranchForCommit(host, repoSuffix, hash) {
+      const proto = host.startsWith("localhost") ? "http" : "https";
+      const apiBase = `${proto}://${host}/api/v1/repos/${repoSuffix}`;
+      const sig = AbortSignal.timeout(3000);
+      const [branchRes, repoRes] = await Promise.allSettled([
+        fetch(`${apiBase}/branches?limit=50`, { signal: sig }),
+        fetch(apiBase, { signal: sig }),
+      ]);
+      let defaultBranch = "main";
+      if (repoRes.status === "fulfilled" && repoRes.value.ok) {
+        const info = await repoRes.value.json().catch(() => null);
+        if (info?.default_branch) defaultBranch = info.default_branch;
+      }
+      if (branchRes.status === "fulfilled" && branchRes.value.ok) {
+        const branches = await branchRes.value.json().catch(() => []);
+        const h = hash.toLowerCase();
+        for (const b of (branches ?? [])) {
+          const id = (b.commit?.id ?? "").toLowerCase();
+          if (id.startsWith(h) || h.startsWith(id.slice(0, Math.max(h.length, 7)))) {
+            return b.name;
+          }
+        }
+      }
+      return defaultBranch;
     }
 
     // -----------------------------------------------------------------------
