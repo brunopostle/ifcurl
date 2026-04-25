@@ -124,6 +124,25 @@ def main() -> None:
         ),
     )
 
+    render_service_parser = subparsers.add_parser(
+        "render-service",
+        help="Start the ifcurl render isolation service on a Unix socket",
+        description=(
+            "Start the render isolation service that handles all IFC parsing and\n"
+            "rendering.  This service runs with restricted privileges (no network,\n"
+            "no execve) and communicates with the main ifcurl-api service over a\n"
+            "Unix-domain socket.  Configure the API service with\n"
+            "IFCURL_RENDER_SOCKET pointing to the same socket path."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    render_service_parser.add_argument(
+        "--socket",
+        default="/run/ifcurl/render.sock",
+        metavar="PATH",
+        help="Unix socket path to listen on (default: /run/ifcurl/render.sock)",
+    )
+
     cache_parser = subparsers.add_parser(
         "cache",
         help="Inspect and manage the local git repository cache",
@@ -168,6 +187,8 @@ def main() -> None:
         _cmd_render(args)
     elif args.command == "serve":
         _cmd_serve(args)
+    elif args.command == "render-service":
+        _cmd_render_service(args)
     elif args.command == "cache":
         _cmd_cache(args)
 
@@ -245,6 +266,22 @@ def _cmd_serve(args: argparse.Namespace) -> None:
         service.configure_allowed_hosts(allowed)
 
     uvicorn.run(app, host=args.host, port=args.port)
+
+
+def _cmd_render_service(args: argparse.Namespace) -> None:
+    try:
+        import uvicorn
+
+        from ifcurl.render_service import app
+    except ImportError:
+        print(
+            "Error: service dependencies are not installed.\n"
+            "Install with: pip install 'ifcurl[service]'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    uvicorn.run(app, uds=args.socket)
 
 
 def _cmd_cache(args: argparse.Namespace) -> None:

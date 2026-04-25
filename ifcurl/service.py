@@ -35,8 +35,10 @@ Tier 4  sha256(url) → PNG bytes
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import ipaddress
+import json
 import os
 import threading
 import time
@@ -52,15 +54,19 @@ from ifcurl.auth import get_token_for_host
 from ifcurl.bcf import build_bcf
 from ifcurl.git import diff_text as git_diff_text
 from ifcurl.git import fetch_ifc
+from ifcurl.render_service import _sandboxed_diff, _sandboxed_pipeline, _sandboxed_select
 from ifcurl.sandbox import SandboxCrashError, SandboxTimeoutError, run_sandboxed
 from ifcurl.url import IfcUrl
 
 # ---------------------------------------------------------------------------
-# Subprocess pipeline functions (run inside run_sandboxed — no service imports)
+# Render service delegation (when IFCURL_RENDER_SOCKET is set)
 # ---------------------------------------------------------------------------
 
+_RENDER_SOCKET: str | None = os.environ.get("IFCURL_RENDER_SOCKET")
+_RENDER_TIMEOUT: int = int(os.environ.get("IFCURL_SANDBOX_TIMEOUT", "120")) + 30
 
-def _sandboxed_pipeline(
+
+def _render_via_socket(
     ifc_bytes: bytes,
     selector: str | None,
     element_guids: frozenset[str] | None,
@@ -70,90 +76,95 @@ def _sandboxed_pipeline(
     clips: list,
     visibility: str,
 ) -> tuple[frozenset[str] | None, bytes]:
-    """Parse, optionally resolve selection, and render in a child process.
+    """Delegate render to the render service over the Unix socket."""
+    import httpx
 
-    Returns ``(new_guids, png_bytes)`` where *new_guids* is populated only when
-    *selector* was given (T3 cache miss path) so the caller can update the cache.
-    """
-    import ifcopenshell
-    import ifcopenshell.util.selector
-
-    from ifcurl import render as render_mod
-
-    model = ifcopenshell.file.from_string(ifc_bytes.decode())
-
-    # T3 cache miss: run selector and return GUIDs for caching
-    new_guids: frozenset[str] | None = None
-    element_ids: list[int] | None = None
-
-    if selector is not None:
-        matched = list(ifcopenshell.util.selector.filter_elements(model, selector))
-        new_guids = frozenset(
-            e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId
-        )
-    elif element_guids is not None:
-        # T3 cache hit: convert cached GUIDs to step IDs for this model instance
-        ids = []
-        for guid in element_guids:
-            try:
-                ids.append(model.by_guid(guid).id())
-            except Exception:
-                pass
-        element_ids = ids if ids else None
-
-    png = render_mod.render(
-        model,
-        selector=selector,
-        element_ids=element_ids,
-        camera=camera,
-        fov=fov,
-        scale=scale,
-        clips=clips or None,
-        visibility=visibility,
-    )
-    return new_guids, png
+    params = {
+        "selector": selector,
+        "element_guids": list(element_guids) if element_guids is not None else None,
+        "camera": list(camera) if camera else None,
+        "fov": fov,
+        "scale": scale,
+        "clips": clips,
+        "visibility": visibility,
+    }
+    try:
+        with httpx.Client(transport=httpx.HTTPTransport(uds=_RENDER_SOCKET)) as client:
+            resp = client.post(
+                "http://render/render",
+                files={"ifc": ifc_bytes},
+                data={"params": json.dumps(params)},
+                timeout=_RENDER_TIMEOUT,
+            )
+    except httpx.TransportError as exc:
+        raise HTTPException(status_code=503, detail=f"Render service unavailable: {exc}") from exc
+    _check_render_response(resp)
+    result = resp.json()
+    png_bytes = base64.b64decode(result["png"])
+    raw_guids = result.get("guids")
+    new_guids = frozenset(raw_guids) if raw_guids is not None else None
+    return new_guids, png_bytes
 
 
-def _sandboxed_select(ifc_bytes: bytes, selector: str) -> list[str]:
-    """Parse and run selector in a child process. Returns list of GlobalIds."""
-    import ifcopenshell
-    import ifcopenshell.util.selector
+def _select_via_socket(ifc_bytes: bytes, selector: str) -> list[str]:
+    """Delegate selector execution to the render service over the Unix socket."""
+    import httpx
 
-    model = ifcopenshell.file.from_string(ifc_bytes.decode())
-    matched = list(ifcopenshell.util.selector.filter_elements(model, selector))
-    return [e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId]
+    try:
+        with httpx.Client(transport=httpx.HTTPTransport(uds=_RENDER_SOCKET)) as client:
+            resp = client.post(
+                "http://render/select",
+                files={"ifc": ifc_bytes},
+                data={"selector": selector},
+                timeout=_RENDER_TIMEOUT,
+            )
+    except httpx.TransportError as exc:
+        raise HTTPException(status_code=503, detail=f"Render service unavailable: {exc}") from exc
+    _check_render_response(resp)
+    return resp.json()["guids"]
 
 
-def _sandboxed_diff(
+def _diff_via_socket(
     head_bytes: bytes,
     base_bytes: bytes,
-    raw_diff_text: str,
+    raw_diff: str,
     camera: tuple | None,
     fov: float | None,
     scale: float | None,
     clips: list,
 ) -> bytes:
-    """Parse both models, expand diff IDs, and render the two-pass diff image."""
-    import ifcopenshell
+    """Delegate diff rendering to the render service over the Unix socket."""
+    import httpx
 
-    from ifcurl import render as render_mod
-    from ifcurl.diff import expand_step_ids, step_ids_from_diff
+    params = {
+        "raw_diff": raw_diff,
+        "camera": list(camera) if camera else None,
+        "fov": fov,
+        "scale": scale,
+        "clips": clips,
+    }
+    try:
+        with httpx.Client(transport=httpx.HTTPTransport(uds=_RENDER_SOCKET)) as client:
+            resp = client.post(
+                "http://render/render_diff",
+                files={"head_ifc": head_bytes, "base_ifc": base_bytes},
+                data={"params": json.dumps(params)},
+                timeout=_RENDER_TIMEOUT,
+            )
+    except httpx.TransportError as exc:
+        raise HTTPException(status_code=503, detail=f"Render service unavailable: {exc}") from exc
+    _check_render_response(resp)
+    return resp.content
 
-    model_head = ifcopenshell.file.from_string(head_bytes.decode())
-    model_base = ifcopenshell.file.from_string(base_bytes.decode())
 
-    raw_ids = step_ids_from_diff(raw_diff_text)
-    diff_ids = expand_step_ids(model_head, raw_ids)
-
-    return render_mod.render_diff(
-        model_head=model_head,
-        model_base=model_base,
-        diff_ids=diff_ids,
-        camera=camera,
-        fov=fov,
-        scale=scale,
-        clips=clips or None,
-    )
+def _check_render_response(resp) -> None:
+    """Raise SandboxCrashError / SandboxTimeoutError / HTTPException from render service response."""
+    if resp.status_code == 422:
+        raise SandboxCrashError(resp.json().get("detail", "render error"))
+    if resp.status_code == 503:
+        raise SandboxTimeoutError(resp.json().get("detail", "render timeout"))
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
 
 app = FastAPI(
@@ -443,17 +454,29 @@ def preview(request: PreviewRequest) -> Response:
 
     # --- Sandboxed parse + select + render ---
     try:
-        new_guids, png_bytes = run_sandboxed(
-            _sandboxed_pipeline,
-            ifc_bytes,
-            selector_for_sandbox,
-            element_guids,
-            ifc_url.camera,
-            ifc_url.fov,
-            ifc_url.scale,
-            ifc_url.clips or [],
-            ifc_url.visibility,
-        )
+        if _RENDER_SOCKET:
+            new_guids, png_bytes = _render_via_socket(
+                ifc_bytes,
+                selector_for_sandbox,
+                element_guids,
+                ifc_url.camera,
+                ifc_url.fov,
+                ifc_url.scale,
+                ifc_url.clips or [],
+                ifc_url.visibility,
+            )
+        else:
+            new_guids, png_bytes = run_sandboxed(
+                _sandboxed_pipeline,
+                ifc_bytes,
+                selector_for_sandbox,
+                element_guids,
+                ifc_url.camera,
+                ifc_url.fov,
+                ifc_url.scale,
+                ifc_url.clips or [],
+                ifc_url.visibility,
+            )
     except SandboxCrashError as exc:
         raise HTTPException(
             status_code=422, detail=f"IFC parse/render crashed: {exc}"
@@ -525,7 +548,10 @@ def bcf_export(request: BcfRequest) -> Response:
             _t2_put(hexsha, ifc_url.path, ifc_bytes)
 
         try:
-            guids = run_sandboxed(_sandboxed_select, ifc_bytes, ifc_url.selector)
+            if _RENDER_SOCKET:
+                guids = _select_via_socket(ifc_bytes, ifc_url.selector)
+            else:
+                guids = run_sandboxed(_sandboxed_select, ifc_bytes, ifc_url.selector)
         except SandboxCrashError as exc:
             raise HTTPException(
                 status_code=422, detail=f"IFC parse/select crashed: {exc}"
@@ -647,16 +673,27 @@ def render_diff(request: DiffRequest) -> Response:
 
     # --- Sandboxed parse + expand + render ---
     try:
-        png_bytes = run_sandboxed(
-            _sandboxed_diff,
-            head_bytes,
-            base_bytes,
-            raw_diff,
-            head_url.camera,
-            head_url.fov,
-            head_url.scale,
-            head_url.clips or [],
-        )
+        if _RENDER_SOCKET:
+            png_bytes = _diff_via_socket(
+                head_bytes,
+                base_bytes,
+                raw_diff,
+                head_url.camera,
+                head_url.fov,
+                head_url.scale,
+                head_url.clips or [],
+            )
+        else:
+            png_bytes = run_sandboxed(
+                _sandboxed_diff,
+                head_bytes,
+                base_bytes,
+                raw_diff,
+                head_url.camera,
+                head_url.fov,
+                head_url.scale,
+                head_url.clips or [],
+            )
     except SandboxCrashError as exc:
         raise HTTPException(
             status_code=422, detail=f"IFC diff render crashed: {exc}"

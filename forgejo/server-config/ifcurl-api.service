@@ -1,0 +1,54 @@
+[Unit]
+Description=ifcurl API service (git fetch + caching + SSRF protection)
+Documentation=https://github.com/brunopostle/ifcurl
+After=network.target ifcurl-render.service
+Requires=ifcurl-render.service
+
+[Service]
+Type=simple
+User=ifcurl
+Group=ifcurl
+EnvironmentFile=-/etc/ifcurl/env
+# Tell the API service where to find the render service Unix socket
+Environment=IFCURL_RENDER_SOCKET=/run/ifcurl/render.sock
+ExecStart=/usr/local/bin/ifcurl serve \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --allowed-hosts git.example.com
+Restart=on-failure
+RestartSec=5
+
+# Cache configuration — override in /etc/ifcurl/env:
+#   IFCURL_CACHE_MAX_GB=10   max bare-repo disk cache
+#   IFCURL_T2_MAX=8          max IFC blobs in memory
+#   IFCURL_T3_MAX=64         max selector results in memory
+
+# ---------------------------------------------------------------------------
+# Sandbox hardening
+#
+# The API service fetches from git remotes and reads tokens from
+# /etc/ifcurl/env — it needs network access and execve for git CLI calls.
+# IFC parsing and rendering are delegated to ifcurl-render.service over
+# a Unix socket, so this service never loads ifcopenshell or pyvista.
+# ---------------------------------------------------------------------------
+Environment=XDG_CACHE_HOME=/var/cache
+CacheDirectory=ifcurl
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/cache/ifcurl /run/ifcurl
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @process @files @io-event @network-io
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

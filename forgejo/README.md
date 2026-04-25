@@ -44,7 +44,8 @@ forgejo/
   templates/custom/
     footer.tmpl                         ← "View in 3D" + PR diff injection (no rebuild needed)
   server-config/
-    ifcurl-preview.service              ← systemd unit for the preview service
+    ifcurl-api.service                  ← systemd unit for the API service (git + caching)
+    ifcurl-render.service               ← systemd unit for the render isolation service
     gitconfig-ifcmerge                  ← git merge driver registration for /etc/gitconfig
     gitattributes                       ← system-wide gitattributes for bare repos
 ```
@@ -53,7 +54,7 @@ forgejo/
 
 ## Prerequisites
 
-- ifcurl preview service running and reachable from the Forgejo server
+- ifcurl API service + render service running (see [Running the preview service](#running-the-preview-service))
 - Nginx (or equivalent) in front of Forgejo if PR diff images are wanted
 - Forgejo source tree cloned and building cleanly (`go` 1.21+) — **only if**
   markdown inline preview is wanted
@@ -141,21 +142,38 @@ sudo systemctl restart forgejo
 
 ## Running the preview service
 
-### As a systemd service (recommended)
+The service is split into two systemd units for security isolation:
 
-A systemd unit is provided at `server-config/ifcurl-preview.service`.
+- **ifcurl-api** — handles HTTP requests, git fetching, and caching.  Has network
+  access and can call git CLI tools.  Holds credentials (`/etc/ifcurl/env`).
+  Delegates all IFC rendering to ifcurl-render over a Unix socket.
+
+- **ifcurl-render** — handles IFC parsing and rendering via ifcopenshell and pyvista.
+  Has no network access, no credentials, and `execve`/`execveat` are blocked by
+  systemd.  Communicates only over the Unix socket.
+
+This split limits the blast radius if a crafted IFC file achieves code execution
+in the render process: it cannot reach git hosts or read credentials.
+
+### As systemd services (recommended)
 
 ```bash
-# Create a dedicated user
+# Create the two service users
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin ifcurl
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin ifcurl-render
 
-# Install the unit (edit AllowedHosts and port first)
-sudo cp forgejo/server-config/ifcurl-preview.service /etc/systemd/system/
+# Add ifcurl user to ifcurl-render group so it can read the socket
+sudo usermod -aG ifcurl-render ifcurl
+
+# Install the units (edit AllowedHosts and port in ifcurl-api.service first)
+sudo cp forgejo/server-config/ifcurl-api.service    /etc/systemd/system/
+sudo cp forgejo/server-config/ifcurl-render.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now ifcurl-preview
+sudo systemctl enable --now ifcurl-render
+sudo systemctl enable --now ifcurl-api
 ```
 
-Edit the `ExecStart` line to set your Forgejo hostname:
+Edit the `ExecStart` line in `ifcurl-api.service` to set your Forgejo hostname:
 
 ```ini
 ExecStart=/usr/local/bin/ifcurl serve \
@@ -164,7 +182,7 @@ ExecStart=/usr/local/bin/ifcurl serve \
     --allowed-hosts git.example.com
 ```
 
-Cache limits and other environment variables can be set in
+Cache limits and other environment variables for the API service go in
 `/etc/ifcurl/env` (one `KEY=value` per line):
 
 ```bash
@@ -172,7 +190,19 @@ IFCURL_CACHE_MAX_GB=10
 IFCURL_T2_MAX=16
 ```
 
-### Manually (for testing)
+Render-side environment variables (timeouts, memory limits) go in
+`/etc/ifcurl/render-env`:
+
+```bash
+IFCURL_SANDBOX_TIMEOUT=180
+IFCURL_SANDBOX_MEMORY_MB=2048
+```
+
+### Single-service mode (testing / simple deployments)
+
+Without `IFCURL_RENDER_SOCKET` set, the API service handles rendering directly
+in its own subprocess sandbox.  This is simpler to set up but offers less
+isolation.
 
 ```bash
 ifcurl serve --allowed-hosts git.example.com

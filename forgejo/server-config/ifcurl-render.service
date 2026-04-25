@@ -1,0 +1,60 @@
+[Unit]
+Description=ifcurl render isolation service (IFC parsing + rendering)
+Documentation=https://github.com/brunopostle/ifcurl
+After=network.target
+
+[Service]
+Type=simple
+User=ifcurl-render
+Group=ifcurl-render
+RuntimeDirectory=ifcurl
+RuntimeDirectoryMode=0775
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/local/bin/ifcurl render-service \
+    --socket /run/ifcurl/render.sock
+Restart=on-failure
+RestartSec=5
+
+# Render configuration — override in /etc/ifcurl/render-env:
+#   IFCURL_SANDBOX_TIMEOUT=120   max seconds per render subprocess
+#   IFCURL_SANDBOX_MEMORY_MB=0   address-space cap per subprocess (0=unlimited)
+
+# ---------------------------------------------------------------------------
+# Sandbox hardening
+#
+# This service processes untrusted IFC data via ifcopenshell and pyvista.
+# It has no credentials, no git access, and no outbound network.
+#
+# AF_UNIX only: the service receives requests from ifcurl-api over the
+# render socket and communicates with its own sandbox child processes.
+# AF_INET/AF_INET6 are excluded — a compromised subprocess cannot reach
+# git hosts or any other external service.
+#
+# execve/execveat are blocked: pyvista and ifcopenshell use fork()/clone()
+# only (verified with strace).  git is never called from this service.
+# The render sandbox (run_sandboxed) uses multiprocessing.Process which
+# uses fork on Linux — safe with ~execve.
+#
+# ProtectSystem=strict + no ReadWritePaths: this service writes nothing to
+# disk; all output is returned over the Unix socket to the API service.
+# ---------------------------------------------------------------------------
+EnvironmentFile=-/etc/ifcurl/render-env
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @process @files @io-event
+SystemCallFilter=~execve ~execveat
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target
