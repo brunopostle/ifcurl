@@ -1,6 +1,9 @@
 services:
   forgejo:
-    image: codeberg.org/forgejo/forgejo:10
+    # Stock Forgejo image — does NOT include the IFC patch from go.patch.
+    # Use this to test the preview service and viewer in isolation only.
+    # To test the Go patch itself, run the patched binary built from go.patch.
+    image: codeberg.org/forgejo/forgejo:13
     container_name: ifcurl-forgejo
     restart: unless-stopped
     ports:
