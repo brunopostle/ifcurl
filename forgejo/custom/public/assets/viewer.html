@@ -97,18 +97,6 @@
       flex: 1; word-break: break-all;
     }
   </style>
-  <script type="importmap">
-  {
-    "imports": {
-      "three":                "https://esm.sh/three@0.177.0",
-      "three/addons/":        "https://esm.sh/three@0.177.0/examples/jsm/",
-      "web-ifc":              "https://unpkg.com/web-ifc@0.0.75/web-ifc-api.js",
-      "@thatopen/fragments":  "https://esm.sh/@thatopen/fragments@3.3.1?external=three,web-ifc",
-      "@thatopen/components": "https://esm.sh/@thatopen/components@3.3.1?external=three,web-ifc,@thatopen/fragments",
-      "jszip":                "https://esm.sh/jszip@3.10.1"
-    }
-  }
-  </script>
 </head>
 <body>
   <div id="toolbar">
@@ -191,9 +179,7 @@
   </div>
 
   <script type="module">
-    import * as THREE from "three";
-    import * as OBC from "@thatopen/components";
-    import JSZip from "jszip";
+    import { THREE, OBC, JSZip } from "/assets/viewer-deps.js";
     import { parseIfcUrl, toRawUrl, buildIfcUrl as _buildIfcUrl } from "./viewer-url.js";
 
     const params   = new URLSearchParams(window.location.search);
@@ -843,9 +829,7 @@
 
       // Firefox blocks cross-origin module workers; wrap in a blob URL.
       const fragments  = components.get(OBC.FragmentsManager);
-      const workerResp = await fetch(
-        "https://unpkg.com/@thatopen/fragments@3.3.1/dist/Worker/worker.mjs"
-      );
+      const workerResp = await fetch("/assets/fragments-worker.js");
       fragments.init(URL.createObjectURL(
         new Blob([await workerResp.text()], { type: "application/javascript" })
       ));
@@ -853,7 +837,7 @@
       const ifcLoader = components.get(OBC.IfcLoader);
       await ifcLoader.setup({
         autoSetWasm: false,
-        wasm: { path: "https://unpkg.com/web-ifc@0.0.75/", absolute: true },
+        wasm: { path: "/assets/", absolute: true },
       });
 
       statusEl.textContent = "Fetching IFC file…";

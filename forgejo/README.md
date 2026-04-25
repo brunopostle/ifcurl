@@ -117,6 +117,49 @@ configuration.
 
 ---
 
+## Building the viewer JavaScript bundle
+
+The viewer loads Three.js, ThatOpen components, and JSZip from locally-bundled
+files rather than CDNs.  The bundle files are committed to the repository, so
+you only need to re-run the build when upgrading a dependency version.
+
+### Prerequisites
+
+Node.js 18+ and npm (used only at build time; not required on the server).
+
+### Run the build
+
+```bash
+cd forgejo/
+npm install        # installs pinned versions from package-lock.json
+npm run build      # produces the four files below
+```
+
+Output files (committed to the repository):
+
+| File | Source | Purpose |
+|---|---|---|
+| `custom/public/assets/viewer-deps.js` | three + @thatopen/components + jszip | Main viewer dependencies |
+| `custom/public/assets/fragments-worker.js` | @thatopen/fragments worker | IFC parsing web worker |
+| `custom/public/assets/web-ifc.wasm` | web-ifc | IFC geometry kernel (single-threaded) |
+| `custom/public/assets/web-ifc-mt.wasm` | web-ifc | IFC geometry kernel (multi-threaded) |
+
+The `node_modules/` directory is gitignored and is never deployed.
+
+### Upgrading a dependency
+
+Edit the version number in `package.json`, then:
+
+```bash
+cd forgejo/
+npm install        # updates package-lock.json
+npm run build      # regenerates the bundle from the new version
+git add package.json package-lock.json custom/public/assets/
+git commit -m "viewer: upgrade <package> to vX.Y.Z"
+```
+
+---
+
 ## Deploying custom assets (no rebuild required)
 
 These files can be updated at any time without recompiling Forgejo.
@@ -124,11 +167,15 @@ These files can be updated at any time without recompiling Forgejo.
 ### Viewer and URL logic
 
 ```bash
-sudo cp forgejo/custom/public/assets/viewer.html    /etc/forgejo/public/assets/
-sudo cp forgejo/custom/public/assets/viewer-url.js  /etc/forgejo/public/assets/
+sudo cp forgejo/custom/public/assets/viewer.html          /etc/forgejo/public/assets/
+sudo cp forgejo/custom/public/assets/viewer-url.js        /etc/forgejo/public/assets/
+sudo cp forgejo/custom/public/assets/viewer-deps.js       /etc/forgejo/public/assets/
+sudo cp forgejo/custom/public/assets/fragments-worker.js  /etc/forgejo/public/assets/
+sudo cp forgejo/custom/public/assets/web-ifc.wasm         /etc/forgejo/public/assets/
+sudo cp forgejo/custom/public/assets/web-ifc-mt.wasm      /etc/forgejo/public/assets/
 ```
 
-Served at `/assets/viewer.html` and `/assets/viewer-url.js`.
+Served at `/assets/viewer.html`, `/assets/viewer-deps.js`, etc.
 
 ### "View in 3D" footer template
 
