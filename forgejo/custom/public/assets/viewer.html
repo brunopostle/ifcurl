@@ -570,7 +570,11 @@
     }
 
     // -----------------------------------------------------------------------
-    // BCF 2.1 export — build zip client-side and trigger download.
+    // BCF 2.1 export.
+    // With a selector: delegates to POST /bcf so the service resolves component
+    // GUIDs server-side.  Fails visibly if the service is unreachable — no
+    // silent fallback to a GUIDless file.
+    // Without a selector: builds the zip client-side (camera + clips only).
     // -----------------------------------------------------------------------
     async function generateBcf(title, comment) {
       if (threeCamera) syncCameraUrl(threeCamera);
@@ -589,6 +593,30 @@
         .filter(v => v.length === 6 && !v.some(isNaN));
       const selector   = qs.get("selector") || "";
       const visibility = qs.get("visibility") || "highlight";
+
+      if (selector) {
+        try {
+          const resp = await fetch("/bcf", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: src, title: title || "IFC View", comment }),
+          });
+          if (!resp.ok) {
+            const detail = await resp.text().catch(() => resp.statusText);
+            statusEl.textContent = `BCF export failed: ${detail}`;
+            return;
+          }
+          const blob = await resp.blob();
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "view.bcf";
+          a.click();
+          URL.revokeObjectURL(a.href);
+        } catch (_) {
+          statusEl.textContent = "BCF export requires the ifcurl service — /bcf not reachable";
+        }
+        return;
+      }
 
       const topicGuid = crypto.randomUUID();
       const vpGuid    = cam ? crypto.randomUUID() : null;

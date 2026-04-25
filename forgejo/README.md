@@ -258,6 +258,12 @@ location /render_diff {
     proxy_set_header   Host $host;
     proxy_read_timeout 120s;
 }
+
+location /bcf {
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_set_header   Host $host;
+    proxy_read_timeout 120s;
+}
 ```
 
 Without this proxy the "View in 3D" button (Case 1/2) still works — it opens
