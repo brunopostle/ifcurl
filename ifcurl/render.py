@@ -556,8 +556,11 @@ def _entity_bounds(model: ifcopenshell.file, entities: list) -> list[float] | No
     """Return [xmin,xmax,ymin,ymax,zmin,zmax] for *entities* in world coords, or None."""
     if not entities:
         return None
+    products = [e for e in entities if e.is_a("IfcProduct")]
+    if not products:
+        return None
     settings = _build_geom_settings(model)
-    it = ifcopenshell.geom.iterator(settings, model, _WORKER_COUNT, include=entities)
+    it = ifcopenshell.geom.iterator(settings, model, _WORKER_COUNT, include=products)
     if not it.initialize():
         return None
     all_verts: list[np.ndarray] = []
@@ -656,7 +659,9 @@ def render_diff(
     removed_entities = []
     for eid in removed_ids:
         try:
-            removed_entities.append(model_base.by_id(eid))
+            e = model_base.by_id(eid)
+            if e.is_a("IfcProduct"):
+                removed_entities.append(e)
         except Exception:
             pass
 
@@ -718,8 +723,23 @@ def render_diff(
     if camera is not None:
         _apply_camera(plotter1, camera, fov, scale)
     elif diff_bounds is not None:
-        plotter1.reset_camera(bounds=diff_bounds)
+        # Reset first to establish a good viewing direction, then reposition
+        # close to the diff area.  reset_camera(bounds=...) re-expands the
+        # clipping range to include all actors, so it doesn't actually zoom;
+        # explicit positioning is required.
+        plotter1.reset_camera()
         plotter1.camera.up = (0, 0, 1)
+        xmin, xmax, ymin, ymax, zmin, zmax = diff_bounds
+        cx, cy, cz = (xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2
+        max_dim = max(xmax - xmin, ymax - ymin, zmax - zmin, 1e-3)
+        cam_pos = np.array(plotter1.camera.position)
+        focal = np.array(plotter1.camera.focal_point)
+        direction = cam_pos - focal
+        direction /= np.linalg.norm(direction)
+        fov_rad = np.radians(plotter1.camera.view_angle)
+        dist = (max_dim / 2) / np.tan(fov_rad / 2) * 1.5
+        plotter1.camera.focal_point = (cx, cy, cz)
+        plotter1.camera.position = tuple(np.array([cx, cy, cz]) + direction * dist)
         if scale is not None:
             plotter1.camera.parallel_projection = True
             plotter1.camera.parallel_scale = scale

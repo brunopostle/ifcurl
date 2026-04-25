@@ -111,7 +111,7 @@ def diff_text(base_url: IfcUrl, head_url: IfcUrl, token: str | None = None) -> s
             f"(got {base_url.path!r} vs {head_url.path!r})"
         )
 
-    repo = _get_repo(base_url, token=token)
+    repo, _ = _get_repo(base_url, token=token)
     try:
         base_hexsha = repo.commit(base_url.git_ref()).hexsha
         head_hexsha = repo.commit(head_url.git_ref()).hexsha
