@@ -614,7 +614,7 @@
       return selectorStr.split("+").every(part => /^[Ii]fc[A-Za-z0-9]+$/.test(part.trim()));
     }
 
-    async function applySelector(components, model, selectorStr, srcUrl) {
+    async function applySelector(components, model, selectorStr, srcUrl, visibility = "isolate", highlighter = null) {
       if (!selectorStr) return;
 
       const hider = components.get(OBC.Hider);
@@ -633,7 +633,11 @@
         if (!matchingCategories.length) return;
         const matching = await classifier.find({ Categories: matchingCategories });
         if (!matching || Object.keys(matching).length === 0) return;
-        await hider.isolate(matching);
+        if (visibility === "highlight" && highlighter) {
+          await highlighter.highlightByID("select", matching, true, false);
+        } else {
+          await hider.isolate(matching);
+        }
         return;
       }
 
@@ -658,7 +662,11 @@
       const localIds = (await model.getLocalIdsByGuids(guids)).filter(id => id !== null);
       if (!localIds.length) return;
 
-      await hider.isolate({ [model.modelId]: localIds });
+      if (visibility === "highlight" && highlighter) {
+        await highlighter.highlightByID("select", { [model.modelId]: localIds }, true, false);
+      } else {
+        await hider.isolate({ [model.modelId]: localIds });
+      }
     }
 
     // -----------------------------------------------------------------------
@@ -1179,17 +1187,13 @@
           .filter(v => v.length === 6 && !v.some(isNaN));
         setupClipper(components, world, clips);
 
+        const visibility  = qsPost.get("visibility") ?? "highlight";
         const selectorStr = qsPost.get("selector") ?? "";
-        if (selectorStr) {
-          statusEl.textContent = "Applying selector…";
-          await applySelector(components, model, selectorStr, ifcUrl);
-        }
 
-        await fragments.core.update(true);
-
-        // Click-to-identify: highlight element and show its properties.
+        // Set up Highlighter before selector so visibility=highlight can use it.
+        let highlighter = null;
         try {
-          const highlighter = components.get(OBC.Highlighter);
+          highlighter = components.get(OBC.Highlighter);
           highlighter.setup({ world });
           highlighter.events.select.onHighlight.add(async (fragmentIdMap) => {
             for (const expressIds of Object.values(fragmentIdMap)) {
@@ -1206,6 +1210,13 @@
         } catch (err) {
           console.warn("Highlighter unavailable:", err.message);
         }
+
+        if (selectorStr) {
+          statusEl.textContent = "Applying selector…";
+          await applySelector(components, model, selectorStr, ifcUrl, visibility, highlighter);
+        }
+
+        await fragments.core.update(true);
 
         syncCameraUrl(threeCamera);
         cameraControls.addEventListener("rest", () => syncCameraUrl(threeCamera));
