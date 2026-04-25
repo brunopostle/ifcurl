@@ -401,6 +401,65 @@ class TestGetEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# /select endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestSelectEndpoint:
+    def test_returns_guids_json(self, model_with_geometry):
+        ifc_bytes = model_with_geometry.to_string().encode()
+        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)):
+            r = client.get("/select", params={"url": SELECTOR_URL})
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/json"
+        body = r.json()
+        assert "guids" in body
+        assert isinstance(body["guids"], list)
+
+    def test_missing_selector_returns_400(self):
+        r = client.get("/select", params={"url": MUTABLE_URL})
+        assert r.status_code == 400
+
+    def test_invalid_url_scheme_returns_400(self):
+        r = client.get("/select", params={"url": "https://example.com/model.ifc"})
+        assert r.status_code == 400
+
+    def test_populates_t3_cache(self, model_with_geometry):
+        ifc_bytes = model_with_geometry.to_string().encode()
+        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)):
+            client.get("/select", params={"url": SELECTOR_URL})
+        assert (FAKE_HEXSHA, "model.ifc", "IfcWall") in _t3_cache
+
+    def test_second_request_uses_t3_cache(self, model_with_geometry):
+        ifc_bytes = model_with_geometry.to_string().encode()
+        call_count = 0
+        real_filter = __import__(
+            "ifcopenshell.util.selector", fromlist=["filter_elements"]
+        ).filter_elements
+
+        def counting_filter(model, selector):
+            nonlocal call_count
+            call_count += 1
+            return real_filter(model, selector)
+
+        with (
+            patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)),
+            patch("ifcopenshell.util.selector.filter_elements", counting_filter),
+        ):
+            client.get("/select", params={"url": SELECTOR_URL})
+            client.get("/select", params={"url": SELECTOR_URL})
+
+        assert call_count == 1
+
+    def test_post_select_returns_guids_json(self, model_with_geometry):
+        ifc_bytes = model_with_geometry.to_string().encode()
+        with patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)):
+            r = client.post("/select", json={"url": SELECTOR_URL})
+        assert r.status_code == 200
+        assert "guids" in r.json()
+
+
+# ---------------------------------------------------------------------------
 # Tier 2: LRU eviction
 # ---------------------------------------------------------------------------
 

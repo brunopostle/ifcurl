@@ -396,6 +396,11 @@ class PreviewRequest(BaseModel):
     """
 
 
+class SelectRequest(BaseModel):
+    url: str
+    token: str | None = None
+
+
 class BcfRequest(BaseModel):
     url: str
     title: str = "IFC View"
@@ -633,6 +638,71 @@ def bcf_export(request: BcfRequest) -> Response:
         media_type="application/octet-stream",
         headers={"Content-Disposition": 'attachment; filename="view.bcf"'},
     )
+
+
+@app.get("/select")
+def select_get(url: str, token: str | None = None) -> JSONResponse:
+    """GET variant of POST /select."""
+    return select(SelectRequest(url=url, token=token))
+
+
+@app.post("/select")
+def select(request: SelectRequest) -> JSONResponse:
+    """Resolve an ifc:// URL selector to a list of element GlobalIds.
+
+    Returns ``{"guids": [...]}`` JSON.  The selector must be present in the
+    URL's ``selector=`` parameter.  Results are cached at Tier 3.
+    """
+    try:
+        ifc_url = IfcUrl.parse(request.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if ifc_url.path is None:
+        raise HTTPException(status_code=400, detail="URL has no 'path' parameter")
+    if not ifc_url.selector:
+        raise HTTPException(status_code=400, detail="URL has no 'selector' parameter")
+
+    _ssrf_check(ifc_url)
+
+    token = request.token
+    if token is None and ifc_url.host:
+        token = get_token_for_host(ifc_url.host)
+
+    try:
+        hexsha, ifc_bytes, _ = fetch_ifc(ifc_url, token=token)
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    _check_ifc_size(ifc_bytes)
+
+    cached_bytes = _t2_get(hexsha, ifc_url.path)
+    ifc_bytes = cached_bytes if cached_bytes is not None else ifc_bytes
+    if cached_bytes is None:
+        _t2_put(hexsha, ifc_url.path, ifc_bytes)
+
+    cached_guids = _t3_get(hexsha, ifc_url.path, ifc_url.selector)
+    if cached_guids is not None:
+        return JSONResponse({"guids": list(cached_guids)})
+
+    try:
+        if _RENDER_SOCKET:
+            guids = _select_via_socket(ifc_bytes, ifc_url.selector)
+        else:
+            guids = run_sandboxed(_sandboxed_select, ifc_bytes, ifc_url.selector)
+    except SandboxCrashError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"IFC parse/select crashed: {exc}"
+        ) from exc
+    except SandboxTimeoutError as exc:
+        raise HTTPException(status_code=503, detail=f"Select timed out: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid selector: {exc}") from exc
+
+    _t3_put(hexsha, ifc_url.path, ifc_url.selector, frozenset(guids))
+    return JSONResponse({"guids": guids})
 
 
 @app.get("/render_diff")

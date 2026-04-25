@@ -556,35 +556,64 @@
 
     // -----------------------------------------------------------------------
     // Apply selector= by isolating matching IFC elements.
-    // Supports simple type names and + union: "IfcWall+IfcSlab".
-    // Subtypes matched by prefix: IfcWall matches IfcWallStandardCase, etc.
-    // Attribute/property filters (.Name=, #id, [pset]) are not yet supported.
+    //
+    // Simple selectors (IFC type names, "+" union): handled client-side.
+    //   "IfcWall"  "IfcWall+IfcSlab"
+    //   Subtypes matched by prefix: IfcWall matches IfcWallStandardCase.
+    //
+    // Complex selectors (property filters, name, GlobalId, pset): resolved
+    //   server-side via GET /select, then applied by GUID in the viewer.
+    //   Requires the ifcurl service to be running.
     // -----------------------------------------------------------------------
-    async function applySelector(components, selectorStr) {
-      const userTypes = selectorStr
-        .split("+")
-        .map(g => g.trim().replace(/[.,\s#[].*/s, "").trim().toUpperCase())
-        .filter(Boolean);
-      if (!userTypes.length) return;
+    function isSimpleTypeSelector(selectorStr) {
+      return selectorStr.split("+").every(part => /^[Ii]fc[A-Za-z0-9]+$/.test(part.trim()));
+    }
 
-      const classifier = components.get(OBC.Classifier);
-      await classifier.byCategory();
-
-      const categoryGroups = classifier.list.get("Categories");
-      if (!categoryGroups) return;
-
-      const matchingCategories = [];
-      for (const [cat] of categoryGroups) {
-        if (userTypes.some(t => cat === t || cat.startsWith(t)))
-          matchingCategories.push(cat);
-      }
-      if (!matchingCategories.length) return;
-
-      const matching = await classifier.find({ Categories: matchingCategories });
-      if (!matching || Object.keys(matching).length === 0) return;
+    async function applySelector(components, model, selectorStr, srcUrl) {
+      if (!selectorStr) return;
 
       const hider = components.get(OBC.Hider);
-      await hider.isolate(matching);
+
+      if (isSimpleTypeSelector(selectorStr)) {
+        const userTypes = selectorStr.split("+").map(p => p.trim().toUpperCase());
+        const classifier = components.get(OBC.Classifier);
+        await classifier.byCategory();
+        const categoryGroups = classifier.list.get("Categories");
+        if (!categoryGroups) return;
+        const matchingCategories = [];
+        for (const [cat] of categoryGroups) {
+          if (userTypes.some(t => cat === t || cat.startsWith(t)))
+            matchingCategories.push(cat);
+        }
+        if (!matchingCategories.length) return;
+        const matching = await classifier.find({ Categories: matchingCategories });
+        if (!matching || Object.keys(matching).length === 0) return;
+        await hider.isolate(matching);
+        return;
+      }
+
+      // Complex selector: ask the service to resolve it to GUIDs.
+      statusEl.textContent = "Resolving selector…";
+      let guids;
+      try {
+        const resp = await fetch(`/select?url=${encodeURIComponent(srcUrl)}`);
+        if (!resp.ok) {
+          const detail = await resp.text().catch(() => resp.statusText);
+          statusEl.textContent = `Selector error: ${detail}`;
+          return;
+        }
+        guids = (await resp.json()).guids ?? [];
+      } catch (_) {
+        statusEl.textContent = "Complex selector requires the ifcurl service — /select not reachable";
+        return;
+      }
+
+      if (!guids.length) return;
+
+      const localIds = (await model.getLocalIdsByGuids(guids)).filter(id => id !== null);
+      if (!localIds.length) return;
+
+      await hider.isolate({ [model.modelId]: localIds });
     }
 
     // -----------------------------------------------------------------------
@@ -1078,7 +1107,7 @@
         const selectorStr = qsPost.get("selector") ?? "";
         if (selectorStr) {
           statusEl.textContent = "Applying selector…";
-          await applySelector(components, selectorStr);
+          await applySelector(components, model, selectorStr, ifcUrl);
         }
 
         await fragments.core.update(true);
