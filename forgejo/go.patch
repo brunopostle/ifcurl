@@ -11,10 +11,10 @@ index 2b19e0f1c9..12be3e1c24 100644
  			goldmark.WithParserOptions(
  				parser.WithAttribute(),
 diff --git a/modules/setting/markup.go b/modules/setting/markup.go
-index 4ab9e7b2d1..c1fad254b4 100644
+index 4ab9e7b2d1..862852381e 100644
 --- a/modules/setting/markup.go
 +++ b/modules/setting/markup.go
-@@ -59,8 +59,14 @@ type MarkupSanitizerRule struct {
+@@ -59,8 +59,15 @@ type MarkupSanitizerRule struct {
  	AllowDataURIImages bool
  }
  
