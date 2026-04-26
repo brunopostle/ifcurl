@@ -412,19 +412,24 @@
       el.addEventListener("keydown", e => { if (e.key === "Enter") loadFromFields(); });
     }
 
-    // ▾ button: clear + focus the ref field so the datalist shows all refs.
+    // ▾ button: if the ref field already has a value, navigate; otherwise clear
+    // + focus so the datalist shows all refs.
     const refPickBtn = document.getElementById("ref-pick-btn");
     refPickBtn.addEventListener("click", () => {
+      if (refInput.value.trim()) { loadFromFields(); return; }
       refInput.value = "";
       refInput.focus();
     });
 
     // Auto-navigate when user selects a datalist option (exact match).
-    refInput.addEventListener("input", () => {
+    // Listen to both input and change events for cross-browser coverage.
+    function onRefInputChange() {
       const dl = document.getElementById("ref-list");
       const known = [...dl.options].map(o => o.value);
       if (known.includes(refInput.value.trim())) loadFromFields();
-    });
+    }
+    refInput.addEventListener("input",  onRefInputChange);
+    refInput.addEventListener("change", onRefInputChange);
 
     // Disable camera controls while any input has focus.
     function onInputFocus() { if (cameraControls) cameraControls.enabled = false; }
@@ -786,8 +791,9 @@
 
     // -----------------------------------------------------------------------
     // Place the camera from ifc:// URL camera=/fov=/scale= params.
+    // obcCamera is the OBC OrthoPerspectiveCamera instance (world.camera).
     // -----------------------------------------------------------------------
-    async function applyCameraParam(controls, camera) {
+    async function applyCameraParam(controls, obcCamera) {
       const qIdx = ifcUrl.indexOf("?");
       if (qIdx < 0) return false;
       const qs = new URLSearchParams(ifcUrl.slice(qIdx + 1));
@@ -805,19 +811,28 @@
       const fovStr   = qs.get("fov");
       const scaleStr = qs.get("scale");
       if (scaleStr) {
-        // Switch to orthographic projection and apply the view-to-world scale.
-        await controls.setOrthoCamera();
+        // Switch to orthographic projection and scale to match the URL's
+        // ViewToWorldScale (height of view in world units).
+        await obcCamera.projection.set("Orthographic");
         const s = parseFloat(scaleStr);
         if (!isNaN(s)) {
-          camera.top    =  s / 2;
-          camera.bottom = -s / 2;
-          camera.updateProjectionMatrix();
+          const ortho = obcCamera.threeOrtho;
+          const currentHeight = ortho.top - ortho.bottom;
+          if (currentHeight > 0) {
+            const ratio = s / currentHeight;
+            ortho.top    *= ratio;
+            ortho.bottom *= ratio;
+            ortho.left   *= ratio;
+            ortho.right  *= ratio;
+            ortho.updateProjectionMatrix();
+          }
         }
         fovInput.value = "";
-      } else if (fovStr && camera.isPerspectiveCamera) {
-        camera.fov = Math.max(10, Math.min(120, parseFloat(fovStr)));
-        camera.updateProjectionMatrix();
-        fovInput.value = Math.round(camera.fov);
+      } else if (fovStr) {
+        const persp = obcCamera.threePersp;
+        persp.fov = Math.max(10, Math.min(120, parseFloat(fovStr)));
+        persp.updateProjectionMatrix();
+        fovInput.value = Math.round(persp.fov);
       }
       return true;
     }
@@ -869,6 +884,14 @@
           statusEl.textContent = "BCF export requires the ifcurl service — /bcf not reachable";
         }
         return;
+      }
+
+      // Capture a snapshot of the current view for the BCF zip.
+      let snapshotB64 = null;
+      if (rendererCanvas) {
+        try {
+          snapshotB64 = rendererCanvas.toDataURL("image/png").split(",")[1];
+        } catch (_) { /* context lost or cross-origin — skip */ }
       }
 
       const topicGuid = crypto.randomUUID();
@@ -926,7 +949,11 @@
       const desc = selector
         ? `${esc(src)}\nselector: ${esc(selector)}`
         : esc(src);
-      const vpEntry  = vpGuid ? `<Viewpoints Guid="${vpGuid}"><Viewpoint>viewpoint.bcfv</Viewpoint></Viewpoints>` : "";
+      const vpEntry  = vpGuid
+        ? `<Viewpoints Guid="${vpGuid}"><Viewpoint>viewpoint.bcfv</Viewpoint>` +
+          (snapshotB64 ? `<Snapshot>snapshot.png</Snapshot>` : "") +
+          `</Viewpoints>`
+        : "";
       const cmtEntry = comment
         ? `<Comment Guid="${crypto.randomUUID()}">
     <Date>${now}</Date><Author>anonymous</Author>
@@ -950,6 +977,7 @@
       zip.file("bcf.version", versionXml);
       zip.folder(topicGuid).file("markup.bcf", markupXml);
       if (vpGuid && viewpointXml) zip.folder(topicGuid).file("viewpoint.bcfv", viewpointXml);
+      if (snapshotB64) zip.folder(topicGuid).file("snapshot.png", snapshotB64, { base64: true });
 
       const blob = await zip.generateAsync({ type: "blob" });
       const a = document.createElement("a");
@@ -1083,7 +1111,7 @@
       if (categories) {
         for (const [name, groupData] of categories) {
           let count = 0;
-          for (const ids of Object.values(groupData.map)) count += ids.length;
+          for (const ids of Object.values(groupData)) count += [...ids].length;
           if (count > 0) types.push({ name, count });
         }
         types.sort((a, b) => b.count - a.count);
@@ -1240,6 +1268,10 @@
       world.scene.setup();
       components.init();
 
+      // Register a raycaster for this world so OBC.Clipper can raycast
+      // against the model surface when creating interactive clip planes.
+      components.get(OBC.Raycasters).get(world);
+
       cameraControls = world.camera.controls;
       threeCamera    = world.camera.three;
 
@@ -1295,7 +1327,8 @@
         loadedModel  = model;
         world.scene.three.add(model.object);
 
-        const hasCam = await applyCameraParam(cameraControls, threeCamera);
+        const hasCam = await applyCameraParam(cameraControls, world.camera);
+        threeCamera = world.camera.three; // refresh: may now be ortho
         if (!hasCam && !model.box.isEmpty()) {
           await cameraControls.fitToBox(model.box, false);
         }
