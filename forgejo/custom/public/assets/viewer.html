@@ -69,8 +69,6 @@
       pointer-events: none;
     }
     #status:empty { display: none; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    body { animation: fadeIn 0.2s ease; }
     #snapshot-overlay {
       position: fixed; inset: 0; top: var(--toolbar-h, 72px); z-index: 4;
       background: #1c1c1e center/contain no-repeat;
@@ -357,14 +355,20 @@
     function loadUrl(url) {
       if (rendererCanvas) {
         try {
-          sessionStorage.setItem("viewerSnapshot", rendererCanvas.toDataURL("image/jpeg", 0.6));
-        } catch (_) { /* cross-origin or context-lost — skip */ }
+          const snap = rendererCanvas.toDataURL("image/jpeg", 0.6);
+          sessionStorage.setItem("viewerSnapshot", snap);
+          // Cover the 3D view with the snapshot NOW, before the page unloads,
+          // so the browser's navigation blank is hidden behind the static image.
+          const cover = document.createElement("div");
+          cover.style.cssText = "position:fixed;inset:0;z-index:9999;" +
+            "background:#1c1c1e center/contain no-repeat";
+          cover.style.backgroundImage = `url("${snap}")`;
+          document.body.appendChild(cover);
+        } catch (_) { /* context-lost or cross-origin — skip */ }
       }
-      document.body.style.transition = "opacity 0.15s";
-      document.body.style.opacity = "0";
       const pageUrl = new URL(window.location.href);
       pageUrl.searchParams.set("url", url);
-      setTimeout(() => { window.location.href = pageUrl.toString(); }, 150);
+      window.location.href = pageUrl.toString();
     }
 
     urlInput.addEventListener("keydown", e => {
