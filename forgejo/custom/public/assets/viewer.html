@@ -69,6 +69,13 @@
       pointer-events: none;
     }
     #status:empty { display: none; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    body { animation: fadeIn 0.2s ease; }
+    #snapshot-overlay {
+      position: fixed; inset: 0; top: var(--toolbar-h, 72px); z-index: 4;
+      background: #1c1c1e center/contain no-repeat;
+      transition: opacity 0.5s ease;
+    }
     body.drag-over::after {
       content: "Drop ifc:// URL or .bcf file";
       position: fixed; inset: 0; z-index: 100;
@@ -142,6 +149,7 @@
              spellcheck="false">
       <button id="clip-btn" class="tb-btn" title="Double-click model surface to add clipping plane">✂ clip</button>
       <button id="clip-clear-btn" class="tb-btn" title="Remove all clipping planes" style="display:none">⊗ clips</button>
+      <button id="fit-btn" class="tb-btn" title="Fit model in view">fit</button>
       <button id="meta-btn" class="tb-btn" title="Model overview: types and storeys">☰</button>
       <button id="bcf-btn" class="tb-btn" title="Export current view as a BCF issue">BCF</button>
       <button id="copy-url-btn" class="tb-btn" title="Copy ifc:// URL to clipboard">⎘</button>
@@ -178,6 +186,14 @@
                placeholder="IfcWall (viewer: type names only)"
                title="Type-name union: IfcWall, IfcWall+IfcSlab. Property/attribute filters are applied server-side only."
                spellcheck="false">
+      </div>
+      <div class="field" id="visibility-field" style="display:none">
+        <label>show</label>
+        <select id="visibility-select" class="ti" title="How to display non-selected elements">
+          <option value="highlight">highlight</option>
+          <option value="ghost">ghost</option>
+          <option value="isolate">isolate</option>
+        </select>
       </div>
     </div>
     <!-- Row 3: BCF export/import form (hidden until BCF button clicked) -->
@@ -233,8 +249,10 @@
     const refInput      = document.getElementById("ref-input");
     const pathInput     = document.getElementById("path-input");
     const selectorInput = document.getElementById("selector-input");
-    const copyUrlBtn    = document.getElementById("copy-url-btn");
-    const newIssueBtn   = document.getElementById("new-issue-btn");
+    const copyUrlBtn       = document.getElementById("copy-url-btn");
+    const newIssueBtn      = document.getElementById("new-issue-btn");
+    const visibilitySelect = document.getElementById("visibility-select");
+    const visibilityField  = document.getElementById("visibility-field");
     const propsPanel    = document.getElementById("props-panel");
     const propsType     = document.getElementById("props-type");
     const propsName     = document.getElementById("props-name");
@@ -251,6 +269,26 @@
     let cameraControls = null;
     let threeCamera    = null;
     let activeClipper  = null;
+    let loadedModel    = null;
+    let rendererCanvas = null;
+
+    // Show previous-view snapshot while the new model loads.
+    {
+      const snap = sessionStorage.getItem("viewerSnapshot");
+      if (snap && ifcUrl) {
+        const el = document.createElement("div");
+        el.id = "snapshot-overlay";
+        el.style.backgroundImage = `url("${snap}")`;
+        document.body.appendChild(el);
+      }
+    }
+    function removeSnapshot() {
+      const el = document.getElementById("snapshot-overlay");
+      if (!el) return;
+      el.style.opacity = "0";
+      setTimeout(() => el.remove(), 550);
+      sessionStorage.removeItem("viewerSnapshot");
+    }
 
     // Build an ifc:// URL from the structured form fields.
     function buildIfcUrl() {
@@ -269,6 +307,20 @@
       selectorInput.value = parsed.selector;
     }
     urlInput.value = ifcUrl;
+
+    // Initialise visibility dropdown from URL and show it when selector is non-empty.
+    {
+      const qIdx = ifcUrl.indexOf("?");
+      const visVal = qIdx < 0 ? "highlight"
+        : (new URLSearchParams(ifcUrl.slice(qIdx + 1)).get("visibility") ?? "highlight");
+      visibilitySelect.value = visVal;
+    }
+    function syncVisibilityField() {
+      visibilityField.style.display = selectorInput.value.trim() ? "" : "none";
+    }
+    selectorInput.addEventListener("input", syncVisibilityField);
+    syncVisibilityField();
+    visibilitySelect.addEventListener("change", loadFromFields);
 
     // Show commit-pin indicator when the ref is a bare commit hash.
     const refBadge     = document.getElementById("ref-badge");
@@ -300,11 +352,19 @@
 
     // -----------------------------------------------------------------------
     // Navigate to the viewer with a different ifc:// URL.
+    // Captures a canvas snapshot for the transition overlay, then fades out.
     // -----------------------------------------------------------------------
     function loadUrl(url) {
+      if (rendererCanvas) {
+        try {
+          sessionStorage.setItem("viewerSnapshot", rendererCanvas.toDataURL("image/jpeg", 0.6));
+        } catch (_) { /* cross-origin or context-lost — skip */ }
+      }
+      document.body.style.transition = "opacity 0.15s";
+      document.body.style.opacity = "0";
       const pageUrl = new URL(window.location.href);
       pageUrl.searchParams.set("url", url);
-      window.location.href = pageUrl.toString();
+      setTimeout(() => { window.location.href = pageUrl.toString(); }, 150);
     }
 
     urlInput.addEventListener("keydown", e => {
@@ -330,6 +390,14 @@
       }
       structQs.delete("clip");
       for (const v of currentQs.getAll("clip")) structQs.append("clip", v);
+      // Include visibility when a selector is set; omit for the default (highlight).
+      if (selectorInput.value.trim()) {
+        const vis = visibilitySelect.value;
+        if (vis && vis !== "highlight") structQs.set("visibility", vis);
+        else structQs.delete("visibility");
+      } else {
+        structQs.delete("visibility");
+      }
       const qsStr = structQs.toString()
         .replace(/%2C/g, ",").replace(/%2B/g, "+").replace(/%24/g, "$");
       loadUrl(structBase + (qsStr ? "?" + qsStr : ""));
@@ -419,6 +487,11 @@
       window.open(issueUrl, "_blank", "noopener");
     });
 
+    document.getElementById("fit-btn").addEventListener("click", () => {
+      if (cameraControls && loadedModel && !loadedModel.box.isEmpty())
+        cameraControls.fitToBox(loadedModel.box, true);
+    });
+
     propsCloseBtn.addEventListener("click", () => { propsPanel.style.display = "none"; });
     propsCopyBtn.addEventListener("click", async () => {
       const guid = propsGuid.textContent;
@@ -432,7 +505,7 @@
     });
 
     const allInputs = [urlInput, fovInput, repoInput, refInput, pathInput, selectorInput,
-                       bcfTitleIn, bcfCommentIn];
+                       visibilitySelect, bcfTitleIn, bcfCommentIn];
     for (const el of allInputs) {
       el.addEventListener("focus",       onInputFocus);
       el.addEventListener("blur",        onInputBlur);
@@ -614,7 +687,34 @@
       return selectorStr.split("+").every(part => /^[Ii]fc[A-Za-z0-9]+$/.test(part.trim()));
     }
 
-    async function applySelector(components, model, selectorStr, srcUrl, visibility = "isolate", highlighter = null) {
+    // Returns a ModelIdMap containing all items in allItems that are NOT in toRemove.
+    function subtractIdMap(allItems, toRemove) {
+      const result = {};
+      for (const [modelId, allIds] of Object.entries(allItems)) {
+        const removeSet = new Set(toRemove[modelId] ?? []);
+        const remaining = [];
+        for (const id of allIds) {
+          if (!removeSet.has(id)) remaining.push(id);
+        }
+        if (remaining.length > 0) result[modelId] = remaining;
+      }
+      return result;
+    }
+
+    // Apply a fragment material style to the given items via FragmentsManager.
+    async function applyFragmentStyle(components, items, color, opacity) {
+      const fragments = components.get(OBC.FragmentsManager);
+      await fragments.resetHighlight();
+      if (Object.keys(items).length > 0) {
+        await fragments.highlight(
+          { customId: "sel", color, opacity, transparent: opacity < 1 },
+          items
+        );
+      }
+      await fragments.core.update(true);
+    }
+
+    async function applySelector(components, model, selectorStr, srcUrl, visibility = "highlight") {
       if (!selectorStr) return;
 
       const hider = components.get(OBC.Hider);
@@ -633,10 +733,16 @@
         if (!matchingCategories.length) return;
         const matching = await classifier.find({ Categories: matchingCategories });
         if (!matching || Object.keys(matching).length === 0) return;
-        if (visibility === "highlight" && highlighter) {
-          await highlighter.highlightByID("select", matching, true, false);
-        } else {
+        if (visibility === "ghost") {
+          // Dim non-selected; selected appear normally.
+          const allItems = await classifier.find({ Categories: [...categoryGroups.keys()] });
+          await applyFragmentStyle(components, subtractIdMap(allItems, matching),
+                                   new THREE.Color(0x888888), 0.15);
+        } else if (visibility === "isolate") {
           await hider.isolate(matching);
+        } else {
+          // highlight (default): colour-overlay the selected elements, all others visible.
+          await applyFragmentStyle(components, matching, new THREE.Color(0xff8800), 1);
         }
         return;
       }
@@ -662,10 +768,15 @@
       const localIds = (await model.getLocalIdsByGuids(guids)).filter(id => id !== null);
       if (!localIds.length) return;
 
-      if (visibility === "highlight" && highlighter) {
-        await highlighter.highlightByID("select", { [model.modelId]: localIds }, true, false);
+      const matchingMap = { [model.modelId]: new Set(localIds) };
+      if (visibility === "ghost") {
+        const allVisible = await hider.getVisibilityMap(true);
+        await applyFragmentStyle(components, subtractIdMap(allVisible, matchingMap),
+                                 new THREE.Color(0x888888), 0.15);
+      } else if (visibility === "isolate") {
+        await hider.isolate(matchingMap);
       } else {
-        await hider.isolate({ [model.modelId]: localIds });
+        await applyFragmentStyle(components, matchingMap, new THREE.Color(0xff8800), 1);
       }
     }
 
@@ -1112,8 +1223,9 @@
       const container  = document.getElementById("viewer");
 
       world.scene    = new OBC.SimpleScene(components);
-      world.renderer = new OBC.SimpleRenderer(components, container);
+      world.renderer = new OBC.SimpleRenderer(components, container, { preserveDrawingBuffer: true });
       world.camera   = new OBC.OrthoPerspectiveCamera(components);
+      rendererCanvas = world.renderer.three.domElement;
       world.scene.setup();
       components.init();
 
@@ -1169,6 +1281,7 @@
       statusEl.textContent = "Parsing IFC…";
       try {
         const model  = await ifcLoader.load(buffer, true, "model");
+        loadedModel  = model;
         world.scene.three.add(model.object);
 
         const hasCam = await applyCameraParam(cameraControls, threeCamera);
@@ -1213,13 +1326,14 @@
 
         if (selectorStr) {
           statusEl.textContent = "Applying selector…";
-          await applySelector(components, model, selectorStr, ifcUrl, visibility, highlighter);
+          await applySelector(components, model, selectorStr, ifcUrl, visibility);
         }
 
         await fragments.core.update(true);
 
         syncCameraUrl(threeCamera);
         cameraControls.addEventListener("rest", () => syncCameraUrl(threeCamera));
+        removeSnapshot();
 
         populateMetaPanel(components).catch(err => {
           console.warn("Metadata panel unavailable:", err.message);
@@ -1227,6 +1341,7 @@
 
         statusEl.textContent = "";
       } catch (err) {
+        removeSnapshot();
         statusEl.textContent = `Render error: ${err.message}`;
         console.error(err);
       }
