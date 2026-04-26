@@ -145,12 +145,12 @@
       <input id="url-input" class="ti" type="text"
              placeholder="Paste ifc:// URL and press Enter, or fill fields below"
              spellcheck="false">
+      <button id="copy-url-btn" class="tb-btn" title="Copy ifc:// URL to clipboard">⎘</button>
       <button id="clip-btn" class="tb-btn" title="Double-click model surface to add clipping plane">✂ clip</button>
       <button id="clip-clear-btn" class="tb-btn" title="Remove all clipping planes" style="display:none">⊗ clips</button>
       <button id="fit-btn" class="tb-btn" title="Fit model in view">fit</button>
       <button id="meta-btn" class="tb-btn" title="Model overview: types and storeys">☰</button>
       <button id="bcf-btn" class="tb-btn" title="Export current view as a BCF issue">BCF</button>
-      <button id="copy-url-btn" class="tb-btn" title="Copy ifc:// URL to clipboard">⎘</button>
       <button id="new-issue-btn" class="tb-btn" title="Open new issue with this view URL">Issue</button>
       <div id="fov-wrap">
         FOV <input id="fov-input" class="ti" type="number" min="10" max="120" step="1"
@@ -178,7 +178,7 @@
         <input id="path-input" class="ti" type="text"
                placeholder="model.ifc" spellcheck="false">
       </div>
-      <div class="field" style="flex:1">
+      <div class="field" style="flex:2">
         <label>selector</label>
         <input id="selector-input" class="ti" type="text"
                placeholder="IfcWall (viewer: type names only)"
@@ -486,7 +486,7 @@
       const p = parseIfcUrl(src);
       if (!p || !p.host || !p.repoSuffix) return;
       const title = p.path ? `IFC view: ${p.path}` : "IFC view";
-      const issueUrl = `https://${p.host}/${p.repoSuffix}/issues/new` +
+      const issueUrl = `${window.location.origin}/${p.repoSuffix}/issues/new` +
         `?title=${encodeURIComponent(title)}&body=${encodeURIComponent(src)}`;
       window.open(issueUrl, "_blank", "noopener");
     });
