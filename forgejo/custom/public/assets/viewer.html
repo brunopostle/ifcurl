@@ -1111,6 +1111,11 @@
 
       if (storeyNames.length) {
         html.push("<h3>Storeys</h3>");
+        html.push(
+          `<div class="meta-row storey-row active" data-storey="">` +
+          `<span class="meta-name">All storeys</span>` +
+          `</div>`
+        );
         for (const name of storeyNames) {
           html.push(
             `<div class="meta-row storey-row" data-storey="${name.replace(/"/g, "&quot;")}">` +
@@ -1127,14 +1132,16 @@
       metaPanel.innerHTML = html.join("");
 
       // Wire up storey click-to-isolate.
-      let activeRow = null;
+      const allRow = metaPanel.querySelector(".storey-row[data-storey='']");
+      let activeRow = allRow;
       for (const row of metaPanel.querySelectorAll(".storey-row")) {
         row.addEventListener("click", async () => {
           const name = row.dataset.storey;
-          if (activeRow === row) {
-            // Toggle off: show all.
-            activeRow = null;
-            row.classList.remove("active");
+          if (!name || activeRow === row) {
+            // "All storeys" row or clicking the active row: show all.
+            activeRow?.classList.remove("active");
+            activeRow = allRow;
+            allRow?.classList.add("active");
             await hider.set(true);
           } else {
             activeRow?.classList.remove("active");
