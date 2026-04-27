@@ -257,8 +257,9 @@ newIssueBtn.addEventListener("click", () => {
   const p = parseIfcUrl(src);
   if (!p || !p.host || !p.repoSuffix) return;
   const title = p.path ? `IFC view: ${p.path}` : "IFC view";
+  const body = `[${title}](${src})`;
   const issueUrl = `${window.location.origin}/${p.repoSuffix}/issues/new` +
-    `?title=${encodeURIComponent(title)}&body=${encodeURIComponent(src)}`;
+    `?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
   window.open(issueUrl, "_blank", "noopener");
 });
 

@@ -7,19 +7,22 @@ split into two tiers by what infrastructure they require.
 
 | Feature | What it needs | Forgejo rebuild? |
 |---|---|---|
-| "View in 3D" button on file/history pages | ifcurl service + `footer.tmpl` | No |
+| "View in 3D" button on file/history pages | `ifcurl.js` + ifcurl service | No |
 | Browser IFC viewer | `viewer.html` static asset | No |
-| PR diff 3D render | ifcurl service + `footer.tmpl` + **Nginx proxy** | No |
-| ifc:// links in markdown → inline preview | Go patch + `PREVIEW_SERVICE_URL` in app.ini | **Yes** |
+| PR diff 3D render | `ifcurl.js` + ifcurl service + **Nginx proxy** | No |
+| `[title](ifc://...)` links in markdown → inline preview | `ifcurl.js` + ifcurl service + **Nginx proxy** | No |
+| Bare `ifc://...` text in markdown → inline preview | Go patch + `PREVIEW_SERVICE_URL` in app.ini | **Yes** |
 
-The first three features are implemented entirely as static assets (`footer.tmpl`,
-`viewer.html`).  They survive Forgejo upgrades without touching the Go patch and
-require no Forgejo rebuild.
+All features except bare-URL markdown rendering work with static asset deployment
+only — no Forgejo rebuild required.  `ifcurl.js` detects `<a href="ifc://...">` links
+produced by Goldmark's standard link parser and replaces them with preview figures
+at page load.
 
-The Go patch is needed **only** for rendering ifc:// links that appear in
-markdown (issue bodies, comments, wiki).  Minimising the patch surface is
-deliberate — every line of Go code must be re-verified against each Forgejo
-release.
+The Go patch is needed **only** if you want bare `ifc://...` text in markdown
+(without `[title](...)` syntax) to render as a preview.  The Issue button in the
+viewer emits `[title](ifc://...)` link syntax, so normal issue/PR workflows work
+without the patch.  Minimising the patch surface is deliberate — every line of Go
+code must be re-verified against each Forgejo release.
 
 The PR diff feature requires a **reverse proxy** (e.g. Nginx) to expose the
 ifcurl service at the same origin as Forgejo.  This is because the diff image is

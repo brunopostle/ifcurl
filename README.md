@@ -59,21 +59,19 @@ A self-contained WebGL IFC viewer (`viewer.html`) served as a Forgejo asset at `
 
 ## Forgejo integration
 
-A source patch and set of assets for Forgejo. See [`forgejo/README.md`](forgejo/README.md) for full apply, build, and deployment instructions.
+A set of JS assets and an optional Go patch for Forgejo. Most features work with
+asset deployment only — no Forgejo rebuild required. See
+[`forgejo/README.md`](forgejo/README.md) for full details.
 
-### Quick setup
+### Quick setup (no rebuild)
+
+Deploy the assets and the preview service. All features work except bare
+`ifc://...` text in markdown (use `[title](ifc://...)` link syntax instead, which
+the viewer's Issue button produces automatically).
 
 ```bash
-# Apply the Go source patch
-cp forgejo/modules/markup/markdown/ifc_url{,_test}.go /path/to/forgejo/modules/markup/markdown/
-cd /path/to/forgejo && git apply /path/to/ifcurl/forgejo/go.patch
-
-# Build Forgejo
-go build -tags 'sqlite sqlite_unlock_notify' \
-  -ldflags "-X 'forgejo.org/modules/setting.StaticRootPath=/usr/share/forgejo'" \
-  -o forgejo . && sudo cp forgejo /usr/bin/forgejo
-
-# Deploy assets (no rebuild needed)
+# Deploy assets
+sudo mkdir -p /var/lib/forgejo/custom/public/assets/ /var/lib/forgejo/custom/templates/custom/
 sudo cp forgejo/custom/public/assets/viewer*.* /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/ifcurl.js /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/templates/custom/footer.tmpl /var/lib/forgejo/custom/templates/custom/
@@ -83,6 +81,19 @@ sudo systemctl restart forgejo
 sudo cp forgejo/server-config/ifcurl-preview.service /etc/systemd/system/
 # edit ExecStart --allowed-hosts to match your Forgejo hostname, then:
 sudo systemctl enable --now ifcurl-preview
+```
+
+### Optional: Go patch for bare URL rendering
+
+To also render bare `ifc://...` text in markdown (without `[title](...)` syntax),
+apply the Go patch and rebuild Forgejo:
+
+```bash
+cp forgejo/modules/markup/markdown/ifc_url{,_test}.go /path/to/forgejo/modules/markup/markdown/
+cd /path/to/forgejo && git apply /path/to/ifcurl/forgejo/go.patch
+go build -tags 'sqlite sqlite_unlock_notify' \
+  -ldflags "-X 'forgejo.org/modules/setting.StaticRootPath=/usr/share/forgejo'" \
+  -o forgejo . && sudo cp forgejo /usr/bin/forgejo
 ```
 
 Add to `/etc/forgejo/conf/app.ini`:

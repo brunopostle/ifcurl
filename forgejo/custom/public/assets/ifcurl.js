@@ -33,8 +33,45 @@
     return a;
   }
 
+  // Replace <a href="ifc://..."> links in rendered markdown with preview figures.
+  // Handles [title](ifc://...) links produced by Goldmark's standard link parser —
+  // no Go extension required.  Skips anchors already inside .ifcurl-preview (those
+  // were rendered server-side by ifc_url.go when the patched binary is in use).
+  function replaceIfcAnchors() {
+    var origin = window.location.origin;
+    document.querySelectorAll('a[href^="ifc://"]').forEach(function(a) {
+      if (a.closest(".ifcurl-preview")) return;
+      var ifcUrl = a.getAttribute("href");
+      var img = document.createElement("img");
+      img.src = origin + "/preview?url=" + encodeURIComponent(ifcUrl);
+      img.alt = "IFC preview";
+      img.loading = "lazy";
+      img.style.maxWidth = "100%";
+      var imgLink = document.createElement("a");
+      imgLink.href = VIEWER_BASE + "?url=" + encodeURIComponent(ifcUrl);
+      imgLink.title = ifcUrl;
+      imgLink.target = "_blank";
+      imgLink.rel = "noopener noreferrer";
+      imgLink.appendChild(img);
+      var code = document.createElement("code");
+      code.textContent = ifcUrl;
+      var urlLink = document.createElement("a");
+      urlLink.href = ifcUrl;
+      urlLink.appendChild(code);
+      var caption = document.createElement("figcaption");
+      caption.appendChild(urlLink);
+      var figure = document.createElement("figure");
+      figure.className = "ifcurl-preview";
+      figure.appendChild(imgLink);
+      figure.appendChild(caption);
+      a.parentNode.replaceChild(figure, a);
+    });
+  }
+
   function init() {
     var host = window.location.host;
+
+    replaceIfcAnchors();
 
     // -----------------------------------------------------------------------
     // Case 1: single file view — permalink button in .file-header-right.
