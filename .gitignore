@@ -10,3 +10,7 @@ dev/gitea-data/
 .dolt/
 *.db
 .beads-credential-key
+
+
+
+*.tmp.*
