@@ -80,14 +80,29 @@
             img.src = origin + "/render_diff"
                     + "?base=" + encodeURIComponent(baseIfc)
                     + "&head=" + encodeURIComponent(headIfc);
-            img.style.cssText = "max-width:100%;display:block;margin:8px 0";
+            img.style.cssText = "max-width:100%;display:block";
             img.alt = info.treePath;
+            var imgLink = document.createElement("a");
+            imgLink.href = VIEWER_BASE + "?url=" + encodeURIComponent(headIfc);
+            imgLink.target = "_blank";
+            imgLink.rel = "noopener noreferrer";
+            imgLink.appendChild(img);
+            var code = document.createElement("code");
+            code.style.cssText = "display:block;font-size:0.85em;word-break:break-all;margin-top:4px";
+            code.textContent = headIfc;
+            var urlLink = document.createElement("a");
+            urlLink.href = headIfc;
+            urlLink.appendChild(code);
+            var container = document.createElement("div");
+            container.style.cssText = "margin:8px 0";
+            container.appendChild(imgLink);
+            container.appendChild(urlLink);
             var fileBox = a.closest(".diff-file-box");
             var header = fileBox && fileBox.querySelector(".file-header");
             if (header) {
-              header.insertAdjacentElement("afterend", img);
+              header.insertAdjacentElement("afterend", container);
             } else {
-              a.insertAdjacentElement("afterend", img);
+              a.insertAdjacentElement("afterend", container);
             }
           });
         })
@@ -120,31 +135,48 @@
         var newIsIfc = newFile.toLowerCase().endsWith(".ifc");
         var oldIsIfc = oldFile.toLowerCase().endsWith(".ifc");
 
-        var ifcPath, imgSrc;
+        var ifcPath, imgSrc, viewerIfc;
         if (newIsIfc && oldIsIfc && newFile === oldFile && parentSha) {
           // Modified: show colour-coded diff
           ifcPath = newFile;
           var baseIfc = "ifc://" + host + "/" + repoPath + "@" + parentSha + "?path=" + encodeURIComponent(ifcPath);
-          var headIfc = "ifc://" + host + "/" + repoPath + "@" + headSha + "?path=" + encodeURIComponent(ifcPath);
-          imgSrc = origin + "/render_diff?base=" + encodeURIComponent(baseIfc) + "&head=" + encodeURIComponent(headIfc);
+          viewerIfc = "ifc://" + host + "/" + repoPath + "@" + headSha + "?path=" + encodeURIComponent(ifcPath);
+          imgSrc = origin + "/render_diff?base=" + encodeURIComponent(baseIfc) + "&head=" + encodeURIComponent(viewerIfc);
         } else if (newIsIfc) {
           // Added (or renamed to .ifc): plain preview of new version
           ifcPath = newFile;
-          imgSrc = origin + "/preview?url=" + encodeURIComponent("ifc://" + host + "/" + repoPath + "@" + headSha + "?path=" + encodeURIComponent(ifcPath));
+          viewerIfc = "ifc://" + host + "/" + repoPath + "@" + headSha + "?path=" + encodeURIComponent(ifcPath);
+          imgSrc = origin + "/preview?url=" + encodeURIComponent(viewerIfc);
         } else if (oldIsIfc && parentSha) {
           // Deleted (or renamed from .ifc): plain preview of old version
           ifcPath = oldFile;
-          imgSrc = origin + "/preview?url=" + encodeURIComponent("ifc://" + host + "/" + repoPath + "@" + parentSha + "?path=" + encodeURIComponent(ifcPath));
+          viewerIfc = "ifc://" + host + "/" + repoPath + "@" + parentSha + "?path=" + encodeURIComponent(ifcPath);
+          imgSrc = origin + "/preview?url=" + encodeURIComponent(viewerIfc);
         } else {
           return;
         }
 
         var img = document.createElement("img");
         img.src = imgSrc;
-        img.style.cssText = "max-width:100%;display:block;margin:8px 0";
+        img.style.cssText = "max-width:100%;display:block";
         img.alt = ifcPath;
+        var imgLink = document.createElement("a");
+        imgLink.href = VIEWER_BASE + "?url=" + encodeURIComponent(viewerIfc);
+        imgLink.target = "_blank";
+        imgLink.rel = "noopener noreferrer";
+        imgLink.appendChild(img);
+        var code = document.createElement("code");
+        code.style.cssText = "display:block;font-size:0.85em;word-break:break-all;margin-top:4px";
+        code.textContent = viewerIfc;
+        var urlLink = document.createElement("a");
+        urlLink.href = viewerIfc;
+        urlLink.appendChild(code);
+        var container = document.createElement("div");
+        container.style.cssText = "margin:8px 0";
+        container.appendChild(imgLink);
+        container.appendChild(urlLink);
         var header = box.querySelector(".diff-file-header");
-        if (header) header.insertAdjacentElement("afterend", img);
+        if (header) header.insertAdjacentElement("afterend", container);
       });
       return;
     }

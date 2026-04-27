@@ -233,9 +233,9 @@ func (r *ifcURLRenderer) render(w util.BufWriter, _ []byte, node ast.Node, enter
 			`<a href="%s" title="%s">`+
 			`<img src="%s" alt="IFC preview" loading="lazy" style="max-width:100%%"/>`+
 			`</a>`+
-			`<figcaption><code>%s</code></figcaption>`+
+			`<figcaption><a href="%s"><code>%s</code></a></figcaption>`+
 			`</figure>`,
-		safeViewer, safeIfc, safePreview, safeIfc,
+		safeViewer, safeIfc, safePreview, safeIfc, safeIfc,
 	)
 	return ast.WalkSkipChildren, nil
 }
