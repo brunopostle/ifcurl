@@ -29,6 +29,16 @@ describe("parseCommitHref", () => {
     assert.equal(parseCommitHref(""), null);
   });
 
+  test("returns null for a commit directory link (no file path)", () => {
+    // Breadcrumb anchors on a file-view page link to the directory at the
+    // commit, e.g. /org/repo/src/commit/{hash} with no trailing file path.
+    // These must not be mistaken for a file permalink.
+    assert.equal(
+      parseCommitHref("/org/repo/src/commit/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"),
+      null
+    );
+  });
+
   test("returns null if hash is not 40 hex chars", () => {
     assert.equal(parseCommitHref("/org/repo/src/commit/abc123/model.ifc"), null);
   });

@@ -69,10 +69,13 @@ function init() {
   // -----------------------------------------------------------------------
   const btnGroup = document.querySelector(".file-header-right .ui.buttons");
   if (btnGroup) {
-    // Permalink href or current URL when already at a commit.
-    const a = document.querySelector('a[href*="/src/commit/"]');
-    const href = a ? a.getAttribute("href") : window.location.pathname;
-    const info = parseCommitHref(href);
+    // If already at a commit URL use the pathname directly; otherwise find
+    // the Permalink anchor (present on branch/tag file views).
+    let info = parseCommitHref(window.location.pathname);
+    if (!info) {
+      const a = document.querySelector('a[href*="/src/commit/"]');
+      if (a) info = parseCommitHref(a.getAttribute("href"));
+    }
     if (info && info.treePath.toLowerCase().endsWith(".ifc")) {
       btnGroup.appendChild(makeViewerLink(info, "View in 3D"));
     }
