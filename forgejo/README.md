@@ -43,8 +43,9 @@ forgejo/
     ifc_url_test.go                     ← Go tests (copy into source tree)
   custom/public/assets/
     viewer.html                         ← browser IFC viewer (no rebuild needed)
-    viewer-url.js                       ← viewer URL logic module
-    ifcurl.js                           ← "View in 3D" + PR diff injection (no rebuild needed)
+    viewer-url.js                       ← ifc:// URL parse/build/resolve logic (ES module)
+    viewer-util.js                      ← shared pure utilities: parseCommitHref, isSimpleTypeSelector, etc.
+    ifcurl.js                           ← "View in 3D" + PR diff injection (ES module, no rebuild needed)
   templates/custom/
     footer.tmpl                         ← loads ifcurl.js (no rebuild needed)
   server-config/
@@ -137,6 +138,7 @@ Node.js 18+ and npm (used only at build time; not required on the server).
 cd forgejo/
 npm install        # installs pinned versions from package-lock.json
 npm run build      # produces the four files below
+npm test           # run JavaScript unit tests (viewer-url.js, viewer-util.js)
 ```
 
 Output files (committed to the repository):
@@ -174,12 +176,15 @@ These files can be updated at any time without recompiling Forgejo.
 sudo mkdir -p /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/viewer.html          /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/viewer-url.js        /var/lib/forgejo/custom/public/assets/
+sudo cp forgejo/custom/public/assets/viewer-util.js       /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/viewer-deps.js       /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/fragments-worker.js  /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/web-ifc.wasm         /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/web-ifc-mt.wasm      /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/ifcurl.js            /var/lib/forgejo/custom/public/assets/
 ```
+
+`ifcurl.js` is an ES module and imports from `viewer-util.js` at the same path, so both files must be deployed together.
 
 Served at `/assets/viewer.html`, `/assets/viewer-deps.js`, etc.
 

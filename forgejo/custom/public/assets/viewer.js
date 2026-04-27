@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 import { THREE, OBC, JSZip } from "/assets/viewer-deps.js";
 import { parseIfcUrl, toRawUrl, buildIfcUrl as _buildIfcUrl } from "./viewer-url.js";
+import { isSimpleTypeSelector, subtractIdMap, isCommitHash } from "./viewer-util.js";
 
 const params   = new URLSearchParams(window.location.search);
 const ifcUrl   = params.get("url") ?? "";
@@ -459,23 +460,6 @@ function setupClipper(components, world, clips) {
 //   server-side via GET /select, then applied by GUID in the viewer.
 //   Requires the ifcurl service to be running.
 // -----------------------------------------------------------------------
-function isSimpleTypeSelector(selectorStr) {
-  return selectorStr.split("+").every(part => /^[Ii]fc[A-Za-z0-9]+$/.test(part.trim()));
-}
-
-// Returns a ModelIdMap containing all items in allItems that are NOT in toRemove.
-function subtractIdMap(allItems, toRemove) {
-  const result = {};
-  for (const [modelId, allIds] of Object.entries(allItems)) {
-    const removeSet = new Set(toRemove[modelId] ?? []);
-    const remaining = [];
-    for (const id of allIds) {
-      if (!removeSet.has(id)) remaining.push(id);
-    }
-    if (remaining.length > 0) result[modelId] = remaining;
-  }
-  return result;
-}
 
 // Apply a fragment material style to the given items via FragmentsManager.
 async function applyFragmentStyle(components, items, color, opacity) {
@@ -982,10 +966,6 @@ async function populateRefList(host, repoSuffix) {
 // -----------------------------------------------------------------------
 // Commit-pin indicator helpers.
 // -----------------------------------------------------------------------
-function isCommitHash(ref) {
-  return /^[0-9a-f]{7,40}$/.test(ref);
-}
-
 async function fetchBranchForCommit(host, repoSuffix, hash) {
   const proto = host.startsWith("localhost") ? "http" : "https";
   const apiBase = `${proto}://${host}/api/v1/repos/${repoSuffix}`;
