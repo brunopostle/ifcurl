@@ -61,7 +61,9 @@ A self-contained WebGL IFC viewer (`viewer.html`) served as a Forgejo asset at `
 
 A set of JS assets and an optional Go patch for Forgejo. Most features work with
 asset deployment only — no Forgejo rebuild required. See
-[`forgejo/README.md`](forgejo/README.md) for full details.
+[`forgejo/README.md`](forgejo/README.md) for full details, or
+[`forgejo/SETUP_LOCAL.md`](forgejo/SETUP_LOCAL.md) for a self-contained local
+setup on Windows using Docker.
 
 ### Quick setup (no rebuild)
 

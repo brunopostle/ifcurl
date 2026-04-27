@@ -56,6 +56,12 @@ forgejo/
 
 ---
 
+## Local setup (Windows + Docker)
+
+For a self-contained local deployment of Forgejo + ifcurl on Windows using Docker, see [SETUP_LOCAL.md](SETUP_LOCAL.md).
+
+---
+
 ## Prerequisites
 
 - ifcurl API service + render service running (see [Running the preview service](#running-the-preview-service))
