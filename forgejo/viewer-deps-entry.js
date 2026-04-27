@@ -3,4 +3,5 @@
 // viewer.html can do: import { THREE, OBC, JSZip } from "/assets/viewer-deps.js"
 export * as THREE from "three";
 export * as OBC from "@thatopen/components";
+export * as OBCF from "@thatopen/components-front";
 export { default as JSZip } from "jszip";

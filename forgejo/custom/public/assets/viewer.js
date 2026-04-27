@@ -1,6 +1,6 @@
 // Copyright 2026 The Forgejo Authors. All rights reserved.
 // SPDX-License-Identifier: MIT
-import { THREE, OBC, JSZip } from "/assets/viewer-deps.js";
+import { THREE, OBC, OBCF, JSZip } from "/assets/viewer-deps.js";
 import { parseIfcUrl, toRawUrl, buildIfcUrl as _buildIfcUrl } from "./viewer-url.js";
 import { isSimpleTypeSelector, subtractIdMap, isCommitHash } from "./viewer-util.js";
 
@@ -836,15 +836,10 @@ async function importBcf(file) {
 // -----------------------------------------------------------------------
 // Element properties panel
 // -----------------------------------------------------------------------
-function showPropsPanel(props, webIfc) {
-  let typeName = String(props.type ?? "");
-  try {
-    const name = webIfc?.GetNameFromTypeCode(props.type);
-    if (name) typeName = name;
-  } catch { /* not available in this version */ }
-  propsType.textContent = typeName;
-  propsName.textContent = props.Name?.value ?? props.LongName?.value ?? "";
-  propsGuid.textContent = props.GlobalId?.value ?? "";
+function showPropsPanel(typeName, name, guid) {
+  propsType.textContent = typeName ?? "";
+  propsName.textContent = name ?? "";
+  propsGuid.textContent = guid ?? "";
   propsPanel.style.display = "";
 }
 
@@ -862,7 +857,7 @@ async function populateMetaPanel(components) {
   if (categories) {
     for (const [name, groupData] of categories) {
       let count = 0;
-      for (const ids of Object.values(groupData)) count += [...ids].length;
+      for (const ids of Object.values(groupData.map)) { if (ids) count += ids.length; }
       if (count > 0) types.push({ name, count });
     }
     types.sort((a, b) => b.count - a.count);
@@ -1097,14 +1092,25 @@ async function main() {
     // Set up Highlighter before selector so visibility=highlight can use it.
     let highlighter = null;
     try {
-      highlighter = components.get(OBC.Highlighter);
+      highlighter = components.get(OBCF.Highlighter);
       highlighter.setup({ world });
       highlighter.events.select.onHighlight.add(async (fragmentIdMap) => {
-        for (const expressIds of Object.values(fragmentIdMap)) {
-          const expressId = [...expressIds][0];
-          if (expressId == null) continue;
-          const props = await model.getLocalProperties(expressId);
-          if (props) showPropsPanel(props, ifcLoader.webIfc);
+        for (const localIds of Object.values(fragmentIdMap)) {
+          if (!localIds) continue;
+          const localId = [...localIds][0];
+          if (localId == null) continue;
+          const item = model.getItem(localId);
+          if (!item) continue;
+          const [attrs, [category], guid] = await Promise.all([
+            item.getAttributes(),
+            model.threads.invoke(model.modelId, "getItemsCategories", [[localId]]),
+            item.getGuid(),
+          ]);
+          if (attrs) showPropsPanel(
+            category ?? "",
+            attrs.get("Name")?.value ?? attrs.get("LongName")?.value ?? "",
+            guid ?? "",
+          );
           return;
         }
       });

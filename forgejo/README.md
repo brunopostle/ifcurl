@@ -145,7 +145,7 @@ Output files (committed to the repository):
 
 | File | Source | Purpose |
 |---|---|---|
-| `custom/public/assets/viewer-deps.js` | three + @thatopen/components + jszip | Main viewer dependencies |
+| `custom/public/assets/viewer-deps.js` | three + @thatopen/components + @thatopen/components-front + jszip | Main viewer dependencies |
 | `custom/public/assets/fragments-worker.js` | @thatopen/fragments worker | IFC parsing web worker |
 | `custom/public/assets/web-ifc.wasm` | web-ifc | IFC geometry kernel (single-threaded) |
 | `custom/public/assets/web-ifc-mt.wasm` | web-ifc | IFC geometry kernel (multi-threaded) |
