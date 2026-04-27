@@ -41,8 +41,9 @@ forgejo/
   custom/public/assets/
     viewer.html                         ← browser IFC viewer (no rebuild needed)
     viewer-url.js                       ← viewer URL logic module
+    ifcurl.js                           ← "View in 3D" + PR diff injection (no rebuild needed)
   templates/custom/
-    footer.tmpl                         ← "View in 3D" + PR diff injection (no rebuild needed)
+    footer.tmpl                         ← loads ifcurl.js (no rebuild needed)
   server-config/
     ifcurl-api.service                  ← systemd unit for the API service (git + caching)
     ifcurl-render.service               ← systemd unit for the render isolation service
@@ -174,6 +175,7 @@ sudo cp forgejo/custom/public/assets/viewer-deps.js       /var/lib/forgejo/custo
 sudo cp forgejo/custom/public/assets/fragments-worker.js  /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/web-ifc.wasm         /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/custom/public/assets/web-ifc-mt.wasm      /var/lib/forgejo/custom/public/assets/
+sudo cp forgejo/custom/public/assets/ifcurl.js            /var/lib/forgejo/custom/public/assets/
 ```
 
 Served at `/assets/viewer.html`, `/assets/viewer-deps.js`, etc.

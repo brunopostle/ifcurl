@@ -74,7 +74,8 @@ go build -tags 'sqlite sqlite_unlock_notify' \
   -o forgejo . && sudo cp forgejo /usr/bin/forgejo
 
 # Deploy assets (no rebuild needed)
-sudo cp forgejo/custom/public/assets/viewer*.* /etc/forgejo/public/assets/
+sudo cp forgejo/custom/public/assets/viewer*.* /var/lib/forgejo/custom/public/assets/
+sudo cp forgejo/custom/public/assets/ifcurl.js /var/lib/forgejo/custom/public/assets/
 sudo cp forgejo/templates/custom/footer.tmpl /var/lib/forgejo/custom/templates/custom/
 sudo systemctl restart forgejo
 
