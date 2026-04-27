@@ -1,42 +1,143 @@
 # ifcurl
 
-**ifcurl** is a URL scheme, tools, and server integration for addressing shareable views of IFC building models stored in git repositories.
+**ifcurl** is a Forgejo mod that adds 3D model awareness to BIM workflows on git. When IFC files are committed or compared, diff pages show colour-coded visual renders of what changed. Paste an `ifc://` URL into any issue, PR comment, or markdown file and Forgejo renders it as a linked preview image. Every preview is a clickable link that opens the model in an interactive WebGL viewer at the exact viewpoint encoded in the URL.
+
+---
+
+## What you get
+
+### Visual diffs on commit and PR pages
+
+When an `.ifc` file changes in a commit or pull request, the diff page automatically shows a rendered snapshot of the change — added geometry in green, removed in red. The image links directly to the 3D viewer at the head version of the file, and the `ifc://` URL for that view is shown below the image.
+
+### Inline previews in markdown
+
+Paste a bare `ifc://` URL or write `[label](ifc://…)` in any issue, PR comment, or `.md` file:
 
 ```
 ifc://github.com/brunopostle/simple-ifc@heads/main?path=building.ifc&selector=IfcWall&fov=60
 ```
 
-An `ifc://` URL encodes everything needed to reproduce a specific model view: the git source, the file, which elements to show, and the camera position. Like a permalink for BIM — paste it, share it, embed it in documentation.
+Forgejo renders it as a `<figure>` with a preview image linked to the interactive viewer, and the `ifc://` URL shown below as a clickable link.
+
+### "View in 3D" button
+
+A **View in 3D** button appears on every `.ifc` file page alongside Raw / Permalink / History.
+
+### Browser viewer
+
+A self-contained WebGL IFC viewer (`viewer.html`) served as a Forgejo asset at `/assets/viewer.html`.
+
+**Features:**
+
+- Toolbar with raw ifc:// URL input and structured fields (repo, ref, path, selector) — editing any field reloads the model; ref input has branch/tag autocomplete
+- Selector filtering — `IfcWall`, `IfcWall+IfcSlab`; visibility dropdown (`highlight` / `ghost` / `isolate`) for non-selected elements
+- Clipping planes — **✂ clip** button, double-click on model surface to place; drag handles to adjust; planes serialised back into the URL
+- FOV control, camera sync — the URL in the browser bar always reflects the current view and is shareable
+- **Model overview panel** — type counts and storey list; click any storey to isolate it, click again to show all
+- **Click to identify** — click any element to see its IFC type, name, and GlobalId; copy GlobalId to clipboard for use in selectors
+- **⎘ copy** button — copies the current ifc:// URL to clipboard
+- **Issue** button — opens a new issue on the git host with the ifc:// URL pre-filled
+- **BCF export** — exports the current view as a BCF 2.1 file for import into Revit, Navisworks, etc.
+- Drag-and-drop ifc:// URLs onto the page
+- Download progress for large IFC files
+
+### Collaboration workflow
+
+`ifc://` URLs function as view permalinks that can be embedded anywhere: Forgejo issues and comments, pull request discussions, markdown documentation, Slack, or email.
+
+1. Open the viewer and navigate to the view you want to share
+2. Add clipping planes or a selector to isolate the relevant geometry
+3. Click **⎘** to copy the ifc:// URL, or **Issue** to open a pre-filled issue
+4. Paste the URL into a Forgejo issue, PR comment, or any markdown file
+
+**Referencing specific elements:** click any element to see its GlobalId, then paste it directly as `selector=325Q7Fhnf67OZC$$r43uzK`. Use `visibility=highlight`, `ghost`, or `isolate` to control how the selection is displayed.
+
+**BCF export for external tools:** the **BCF** button exports a BCF 2.1 file that can be attached to a Forgejo issue or imported into Revit, Navisworks, Solibri, or any BCF-compatible tool.
 
 ---
 
-## Architecture
+## Forgejo integration
 
-Four interlocking components:
+A source patch and set of assets for Forgejo. See [`forgejo/README.md`](forgejo/README.md) for full apply, build, and deployment instructions.
 
-| Component | Language | What it does |
-|---|---|---|
-| **Python library + CLI** | Python | Parse ifc:// URLs, fetch IFC from git, render PNG |
-| **Preview service** | Python | HTTP server — PNGs on demand |
-| **Forgejo integration** | Go + assets | Inline markdown previews, "View in 3D" button |
-| **Browser viewer** | JavaScript | Interactive WebGL viewer, served as a Forgejo asset |
+### Quick setup
 
+```bash
+# Apply the Go source patch
+cp forgejo/modules/markup/markdown/ifc_url{,_test}.go /path/to/forgejo/modules/markup/markdown/
+cd /path/to/forgejo && git apply /path/to/ifcurl/forgejo/go.patch
+
+# Build Forgejo
+go build -tags 'sqlite sqlite_unlock_notify' \
+  -ldflags "-X 'forgejo.org/modules/setting.StaticRootPath=/usr/share/forgejo'" \
+  -o forgejo . && sudo cp forgejo /usr/bin/forgejo
+
+# Deploy assets (no rebuild needed)
+sudo cp forgejo/custom/public/assets/viewer*.* /etc/forgejo/public/assets/
+sudo cp forgejo/templates/custom/footer.tmpl /var/lib/forgejo/custom/templates/custom/
+sudo systemctl restart forgejo
+
+# Install and start preview service as a systemd unit
+sudo cp forgejo/server-config/ifcurl-preview.service /etc/systemd/system/
+# edit ExecStart --allowed-hosts to match your Forgejo hostname, then:
+sudo systemctl enable --now ifcurl-preview
 ```
-Markdown source:
-  [Section cut](ifc://host/org/repo@heads/main?path=building.ifc&clip=0,0,3,0,0,-1)
-                                      │
-Forgejo renders (via Go patch):        │
-  <figure>                             │
-    <img src="/preview?url=..."> ──────┤── preview service renders PNG
-    <a href="/assets/viewer.html?url=…">   browser viewer (WebGL, interactive)
-  </figure>
+
+Add to `/etc/forgejo/conf/app.ini`:
+
+```ini
+[ifcurl]
+PREVIEW_SERVICE_URL = http://localhost:8000
+; Optional: Forgejo API token for a read-only machine user.
+; The preview service will use this token to fetch IFC files from private
+; repositories on this Forgejo instance.  The token is appended as a query
+; parameter in the <img src> URL generated by the markdown extension, so it
+; is visible in page source.  Only set this on trusted private instances.
+; SERVICE_TOKEN = <forgejo-api-token>
 ```
 
-The viewer is also reachable directly — paste or type an `ifc://` URL into its toolbar, or drag one onto the page.
+**Private repositories:** create a machine user with read access and set `SERVICE_TOKEN` to its API token. Alternatively, configure credentials in `~/.config/ifcurl/tokens.json` under the service user account.
+
+### Authentication in the viewer
+
+When the viewer is served from the same Forgejo instance (`https://git.example.com/assets/viewer.html`), it shares the browser session cookie — private repositories work automatically for authenticated users.
+
+IFC files on other platforms (GitHub, GitLab, a different Forgejo instance) are fetched directly from the browser; only public repositories work for external hosts.
+
+### Preview service
+
+An HTTP service that renders `ifc://` URLs to PNG, intended for co-location with a Forgejo instance.
+
+```bash
+pip install "ifcurl[service]"
+ifcurl serve --allowed-hosts git.example.com     # restrict to your Forgejo host
+ifcurl serve --host 0.0.0.0 --port 9000 --allowed-hosts git.example.com
+```
+
+| Endpoint | Description |
+|---|---|
+| `POST /preview` | Render an ifc:// URL to PNG |
+| `GET /preview?url=ifc://…` | Same, via query string (used by Forgejo `<img>` tags) |
+| `POST /bcf` | Generate a BCF 2.1 zip from an ifc:// URL viewpoint |
+| `GET /select?url=ifc://…` | Resolve a complex selector server-side; returns JSON list of GlobalIds |
+| `GET /render_diff?base=ifc://…&head=ifc://…` | Render a colour-coded diff PNG (added green, removed red) |
+
+**Caching:**
+
+| Tier | Key | Contents | Notes |
+|---|---|---|---|
+| 2 | commit hash + path | IFC bytes | In-memory LRU |
+| 3 | commit hash + path + selector | Resolved element set | In-memory LRU |
+| 4 | SHA-256 of full URL | Rendered PNG | Filesystem; immutable refs only |
+
+Tier 4 is never written for mutable refs (`@heads/`, `@HEAD`).
 
 ---
 
 ## ifc:// URL scheme
+
+An `ifc://` URL encodes everything needed to reproduce a specific model view: the git source, the file, which elements to show, and the camera position. Like a permalink for BIM — paste it, share it, embed it in documentation.
 
 Full specification: [`SPECIFICATION.md`](SPECIFICATION.md)
 
@@ -44,7 +145,7 @@ Full specification: [`SPECIFICATION.md`](SPECIFICATION.md)
 ifc://[user@]host/org/repo@<ref>?<parameters>
 ```
 
-Transport is inferred from the URL structure — no prefix needed:
+Transport is inferred from the URL structure:
 
 | URL form | Transport |
 |---|---|
@@ -83,6 +184,11 @@ Fetch an IFC file from a git repository and render it to PNG.
 pip install "ifcurl[render]"
 ifcurl render "ifc://github.com/brunopostle/simple-ifc@heads/main?path=_test_simple.ifc"
 ifcurl render "ifc://..." -o output.png
+
+# Manage the local git repository cache
+ifcurl cache list           # show cached repos with size and last-access time
+ifcurl cache prune --max 5  # remove oldest repos until cache is under 5 GB
+ifcurl cache clear          # remove all cached repos
 ```
 
 Use as a library:
@@ -103,183 +209,13 @@ png = render(model, selector=url.selector, clips=url.clips or None,
              camera=url.camera, fov=url.fov, visibility=url.visibility)
 ```
 
-Remote repositories are cloned as bare repos to the OS cache directory
-(`~/.cache/ifcurl/` on Linux) on first use. Mutable refs (`@heads/`, `@HEAD`)
-trigger a `git fetch`; immutable refs (commit hashes, tags) use the cache
-as-is.
+Remote repositories are cloned as bare repos to the OS cache directory (`~/.cache/ifcurl/` on Linux) on first use. Mutable refs (`@heads/`, `@HEAD`) trigger a `git fetch`; immutable refs (commit hashes, tags) use the cache as-is.
 
-For private repositories, configure tokens per host in
-`~/.config/ifcurl/tokens.json`:
+For private repositories, configure tokens per host in `~/.config/ifcurl/tokens.json`:
 
 ```json
 { "hosts": { "github.com": "ghp_…", "gitlab.example.com": "glpat_…" } }
 ```
-
----
-
-## Preview service
-
-An HTTP service that renders `ifc://` URLs to PNG, intended for co-location
-with a Forgejo/Gitea instance.
-
-```bash
-pip install "ifcurl[service]"
-ifcurl serve --allowed-hosts git.example.com     # restrict to your Forgejo host
-ifcurl serve --host 0.0.0.0 --port 9000 --allowed-hosts git.example.com
-```
-
-Pass `--allowed-hosts` as a comma-separated list of hostnames (with optional
-`:port`) the service is allowed to fetch from. This prevents the preview
-endpoint from being used to reach internal services. Omitting it allows all
-non-private remote hosts.
-
-### Endpoints
-
-| Endpoint | Description |
-|---|---|
-| `POST /preview` | Render an ifc:// URL to PNG |
-| `GET /preview?url=ifc://…` | Same, via query string (used by Forgejo `<img>` tags) |
-| `POST /bcf` | Generate a BCF 2.1 zip from an ifc:// URL viewpoint |
-
-### Caching
-
-| Tier | Key | Contents | Notes |
-|---|---|---|---|
-| 2 | commit hash + path | IFC bytes | In-memory LRU |
-| 3 | commit hash + path + selector | Resolved element set | In-memory LRU |
-| 4 | SHA-256 of full URL | Rendered PNG | Filesystem; immutable refs only |
-
-Tier 4 is never written for mutable refs (`@heads/`, `@HEAD`).
-
----
-
-## Forgejo integration
-
-A source patch for Forgejo that adds:
-
-- **Inline markdown preview** — `[label](ifc://…)` and bare `ifc://…` in
-  markdown render as `<figure>` preview images linked to the browser viewer.
-- **"View in 3D" button** — appears on `.ifc` file view pages alongside Raw /
-  Permalink / History.
-- **Browser viewer asset** — `viewer.html` + `viewer-url.js` served at
-  `/assets/viewer.html`.
-
-See [`forgejo/README.md`](forgejo/README.md) for full apply, build, and
-deployment instructions.
-
-### Quick summary
-
-```bash
-# Apply the Go source patch
-cp forgejo/modules/markup/markdown/ifc_url{,_test}.go /path/to/forgejo/modules/markup/markdown/
-cd /path/to/forgejo && git apply /path/to/ifcurl/forgejo/go.patch
-
-# Build Forgejo
-go build -tags 'sqlite sqlite_unlock_notify' \
-  -ldflags "-X 'forgejo.org/modules/setting.StaticRootPath=/usr/share/forgejo'" \
-  -o forgejo . && sudo cp forgejo /usr/bin/forgejo
-
-# Deploy assets (no rebuild needed)
-sudo cp forgejo/custom/public/assets/viewer*.* /etc/forgejo/public/assets/
-sudo cp forgejo/templates/custom/footer.tmpl /var/lib/forgejo/custom/templates/custom/
-sudo systemctl restart forgejo
-
-# Install and start preview service as a systemd unit
-sudo cp forgejo/server-config/ifcurl-preview.service /etc/systemd/system/
-# edit ExecStart --allowed-hosts to match your Forgejo hostname, then:
-sudo systemctl enable --now ifcurl-preview
-```
-
-Add to `/etc/forgejo/conf/app.ini`:
-
-```ini
-[ifcurl]
-PREVIEW_SERVICE_URL = http://localhost:8000
-; Optional: Forgejo API token for a read-only machine user.
-; The preview service will use this token to fetch IFC files from private
-; repositories on this Forgejo instance.  The token is appended as a query
-; parameter in the <img src> URL generated by the markdown extension, so it
-; is visible in page source.  Only set this on trusted private instances.
-; SERVICE_TOKEN = <forgejo-api-token>
-```
-
-**Private repositories:** for the preview service to access private repos on
-this Forgejo instance, create a machine user with read access and set
-`SERVICE_TOKEN` to its API token.  The service will use this token when
-fetching IFC files server-side.  Alternatively, configure the preview service's
-own credentials in `~/.config/ifcurl/tokens.json` under the service user
-account — the service already reads host tokens from that file on startup.
-
----
-
-## Browser viewer
-
-A self-contained WebGL IFC viewer (`viewer.html`) built on
-[`@thatopen/components`](https://github.com/ThatOpenCompany/that-open-engine).
-No build step — loads dependencies from CDN.
-
-**Features:**
-
-- Toolbar with raw ifc:// URL input and structured fields (repo, ref, path,
-  selector) — editing any field reloads the model
-- Selector filtering — `IfcWall`, `IfcWall+IfcSlab` (type-name union only in the
-  browser viewer; full IfcOpenShell attribute/property filters are applied
-  server-side by the preview service and are reflected in the URL but not
-  applied visually in the viewer)
-- Clipping planes — `✂ clip` button, double-click on model surface to place;
-  drag handles to adjust; planes serialised back into the URL
-- FOV control, camera sync — the URL in the browser bar always reflects the
-  current view and is shareable
-- Drag-and-drop ifc:// URLs onto the page
-- **Click to identify** — click any element to see its IFC type, name, and
-  GlobalId in a side panel; copy GlobalId to clipboard for use in selectors
-- **⎘ copy** button — copies the current ifc:// URL to clipboard
-- **Issue** button — opens a new issue on the git host with the ifc:// URL
-  pre-filled in the body (works for Forgejo, GitHub, GitLab)
-- **BCF export** — exports the current view (camera, clipping planes, selected
-  elements) as a BCF 2.1 file for import into Revit, Navisworks, etc.
-- Download progress — shows percentage or MB while fetching large IFC files
-
-### Collaboration workflow
-
-`ifc://` URLs function as view permalinks that can be embedded anywhere:
-Forgejo issues and comments, pull request discussions, markdown documentation,
-Slack, or email.
-
-**Basic flow:**
-
-1. Open the viewer and navigate to the view you want to share
-2. Add clipping planes or a selector to isolate the relevant geometry
-3. Click **⎘** to copy the ifc:// URL, or **Issue** to open a pre-filled issue
-4. Paste the URL into a Forgejo issue, PR comment, or any markdown file —
-   Forgejo will render it inline as a linked preview image
-
-**Referencing specific elements:**
-
-Click any element to see its GlobalId. Copy the GlobalId and paste it directly
-as the `selector=` value — a bare 22-character GlobalId selects that one element
-(e.g., `selector=325Q7Fhnf67OZC$$r43uzK`). Use `visibility=highlight`, `ghost`,
-or `isolate` to control how the selection is displayed.
-
-**BCF export for external tools:**
-
-Use the **BCF** button to export a BCF 2.1 file. The resulting `.bcf` can be
-attached to a Forgejo issue as a file, or imported into Revit, Navisworks,
-Solibri, or any BCF-compatible tool to communicate the exact viewpoint and
-element selection to contractors or consultants using proprietary software.
-
-### Authentication
-
-When the viewer is served from the same Forgejo instance
-(`https://git.example.com/assets/viewer.html`), it shares the browser session
-cookie. Any IFC file that the logged-in user can access on that Forgejo instance
-loads without extra configuration — private repositories work automatically for
-authenticated users.
-
-IFC files hosted on other platforms (GitHub, GitLab, a different Forgejo
-instance) are fetched directly from the browser. Only public repositories work
-for external hosts; there is currently no authentication path for external
-private repositories in the browser viewer.
 
 ---
 
