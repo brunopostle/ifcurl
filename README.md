@@ -151,23 +151,32 @@ Tier 4 is never written for mutable refs (`@heads/`, `@HEAD`).
 
 ## ifc:// URL scheme
 
-An `ifc://` URL encodes everything needed to reproduce a specific model view: the git source, the file, which elements to show, and the camera position. Like a permalink for BIM — paste it, share it, embed it in documentation.
+An `ifc://` URL encodes everything needed to reproduce a specific model view: the source — a git repository or an OpenCDE CDE — the file, which elements to show, and the camera position. Like a permalink for BIM — paste it, share it, embed it in documentation.
 
 Full specification: [`SPECIFICATION.md`](SPECIFICATION.md)
 
+**Git source:**
+
 ```
 ifc://[user@]host/org/repo@<ref>?<parameters>
+```
+
+**OpenCDE source:**
+
+```
+ifc://host[/project]?document_id=<id>[&version_index=<N>]&<parameters>
 ```
 
 Transport is inferred from the URL structure:
 
 | URL form | Transport |
 |---|---|
-| `ifc://host/org/repo` | HTTPS |
-| `ifc://git@host/org/repo` | SSH |
+| `ifc://host/org/repo` | HTTPS (git) |
+| `ifc://git@host/org/repo` | SSH (git) |
 | `ifc:///path/to/repo` | Local file |
+| `ifc://host/...?document_id=...` | OpenCDE HTTPS |
 
-Refs follow git namespace form to avoid branch/tag ambiguity:
+Git refs follow git namespace form to avoid branch/tag ambiguity:
 
 | Form | Meaning |
 |---|---|
@@ -180,7 +189,9 @@ Key query parameters:
 
 | Parameter | Description |
 |---|---|
-| `path=` | IFC file path within the repository |
+| `path=` | IFC file path within the repository (git) |
+| `document_id=` | OpenCDE document identifier — signals OpenCDE transport |
+| `version_index=3` | OpenCDE version index — omit for current version |
 | `selector=IfcWall` | [IfcOpenShell selector](https://docs.ifcopenshell.org/ifcopenshell-python/selector_syntax.html) — filter elements; `+` for union |
 | `camera=px,py,pz,dx,dy,dz,ux,uy,uz` | Camera position, direction, up in IFC world coordinates |
 | `fov=60` | Perspective field of view in degrees |
