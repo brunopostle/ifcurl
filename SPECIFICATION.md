@@ -2,9 +2,10 @@
 
 ## 1. Overview
 
-IFC URL is a URL scheme for addressing a specific view of an IFC model stored
-in a Git repository. A single URL encodes the model source, an optional
-element selection, and an optional camera viewpoint.
+IFC URL is a URL scheme for addressing a specific view of an IFC model. A
+single URL encodes the model source — a Git repository or an OpenCDE Common
+Data Environment — an optional element selection, and an optional camera
+viewpoint.
 
 The scheme identifier is `ifc://`.
 
@@ -14,17 +15,20 @@ The scheme identifier is `ifc://`.
 
 ### Transport inference
 
-The git transport is inferred from the URL structure. No transport prefix is
+The transport is inferred from the URL structure. No transport prefix is
 required.
 
 | URL form | Inferred transport |
 |---|---|
-| `ifc://user@host/org/repo` | SSH |
-| `ifc://host/org/repo` | HTTPS |
+| `ifc://user@host/org/repo` | SSH (git) |
+| `ifc://host/org/repo` | HTTPS (git) |
 | `ifc:///path/to/repo` | Local file |
+| `ifc://host/...?document_id=...` | OpenCDE HTTPS (see §9) |
 
-The presence of `user@` userinfo signals SSH. A bare hostname signals HTTPS.
-An empty authority (triple slash) signals a local file path.
+The presence of `user@` userinfo signals SSH. A bare hostname signals HTTPS
+git. An empty authority (triple slash) signals a local file path. The presence
+of a `document_id` query parameter signals OpenCDE transport regardless of the
+host form; in this case no `@ref` component is used.
 
 Credentials are never embedded in the URL. Authentication is handled by the
 platform's git credential store (desktop apps) or by sideloaded tokens
@@ -46,7 +50,7 @@ and tags that share a name.
 | Default branch | `@HEAD` | `@HEAD` |
 
 The `@` character delimits the repository path from the ref. It is always
-present.
+present in git URLs. It is omitted in OpenCDE URLs (see §9).
 
 ### Full structure
 
@@ -148,6 +152,33 @@ half-spaces.
 clip=0,0,3,0,0,-1&clip=0,0,0,0,0,1
 ```
 
+### `document_id`
+
+OpenCDE Documents API identifier for the document to fetch. Its presence
+signals OpenCDE transport (see §9). Mutually exclusive with `path`.
+
+```
+document_id=bf546064-6b97-4730-a094-c21ab929c91a
+```
+
+The value is an opaque string assigned by the CDE; no particular format is
+required by the OpenCDE specification.
+
+### `version_index`
+
+OpenCDE version index of the specific document version to fetch. Must be a
+positive integer matching the `version_index` field returned by the OpenCDE
+Documents API, where higher values indicate newer versions. Only meaningful
+when `document_id` is also present.
+
+```
+version_index=3
+```
+
+When omitted, the resolver fetches the version with the highest
+`version_index` (the current version). A URL with `version_index` present is
+immutable; one with `version_index` absent is mutable.
+
 ### `visibility`
 
 Controls how selected and unselected elements are displayed.
@@ -233,6 +264,8 @@ A compliant viewer must:
 
 - Register `ifc://` as an OS-level protocol handler
 - Resolve the git source (repo, ref, path) and fetch the IFC file
+- Resolve an OpenCDE document source via Foundation API discovery and the
+  Documents API (see §9)
 - Resolve an IfcOpenShell selector against the loaded model
 - Apply perspective camera (`camera` + `fov`)
 - Apply orthographic camera (`camera` + `scale`)
@@ -274,3 +307,74 @@ Local file, default branch:
 ```
 ifc:///home/alice/projects/office@HEAD?path=model.ifc
 ```
+
+OpenCDE document, specific version, perspective view of all walls:
+
+```
+ifc://cde.example.com/project-123?document_id=bf546064-6b97-4730-a094-c21ab929c91a&version_index=3&selector=IfcWall&camera=10,20,5,0,-1,0,0,0,1&fov=60&visibility=ghost
+```
+
+OpenCDE document, current version, no view parameters (opens at default view):
+
+```
+ifc://cde.example.com/project-123?document_id=bf546064-6b97-4730-a094-c21ab929c91a
+```
+
+---
+
+## 9. OpenCDE transport
+
+When a `document_id` parameter is present, the URL addresses a document on an
+OpenCDE-compliant Common Data Environment rather than a Git repository. The
+`path` parameter and the `@ref` component are both absent.
+
+### URL structure
+
+```
+ifc://host[/project-path]?document_id=<id>[&version_index=<N>]&<view-parameters>
+```
+
+The authority and optional path locate the CDE server and project. The path
+structure is implementation-defined and is passed through to the resolver
+without interpretation; it may be empty, a single project identifier, or a
+deeper hierarchy depending on the CDE.
+
+### Version reference
+
+| `version_index` | Meaning | Tier 4 caching |
+|---|---|---|
+| `version_index=N` | Specific immutable version | Safe |
+| absent | Current version (highest index) | Never |
+
+The `version_index` value corresponds directly to the field of the same name
+in the OpenCDE Documents API: a machine-readable integer sequence where higher
+values represent newer versions. It is distinct from `version_number`, which
+is a free-form human-readable label that varies across CDE implementations and
+is not used in `ifc://` URLs.
+
+### Resolver workflow
+
+1. **Discover APIs** — `GET https://host/foundation/versions`. This endpoint
+   is public and requires no authentication. It returns the base URLs for all
+   OpenCDE APIs on this server, including the Documents API endpoint and OAuth2
+   configuration.
+
+2. **Authenticate** — OAuth2 authorization code or implicit flow, using the
+   configuration obtained from step 1. Credentials are never embedded in the
+   `ifc://` URL. Viewer implementations served from the same browser session as
+   the CDE web interface may share the existing session cookie, avoiding an
+   explicit OAuth2 flow for authenticated users.
+
+3. **Resolve document version** — `POST <documents_api_base>/document-versions`
+   with body `{"document_ids": ["<document_id>"]}`. If `version_index` is
+   present, select the returned version whose `version_index` matches; if
+   absent, select the version with the highest `version_index`.
+
+4. **Download** — Fetch the IFC file from the `document_version_download` URL
+   returned in the Documents API response.
+
+### Federation
+
+`ifc://` URLs addressing OpenCDE documents may appear in
+`IFCDOCUMENTREFERENCE` location fields (see §5) alongside relative paths and
+git-hosted `ifc://` URLs. No changes to the federation model are required.
