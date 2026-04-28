@@ -272,6 +272,9 @@ go test ./modules/markup/markdown/ -run TestIfcURL -v
 | 4 — Bonsai integration | planned | Protocol handler + "Copy view URL" |
 | 5 — IFC Viewer integration | planned | Plugin for the open-source IFC Viewer |
 | 6 — Federation | planned | `IFCDOCUMENTREFERENCE` cross-repo links |
+| 7 — OpenCDE Foundation API | planned | Discovery endpoint so OpenCDE clients can find the server |
+| 8 — OpenCDE BCF API | planned | BCF 3.0 REST API in Forgejo — connect Revit, Navisworks, Solibri directly |
+| 9 — OpenCDE Documents API | planned | Expose IFC files in git repos as OpenCDE documents |
 
 Development tasks are tracked with [beads](https://github.com/brunopostle/beads): `bd ready`.
 
