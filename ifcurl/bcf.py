@@ -28,11 +28,14 @@ BCF (BIM Collaboration Format) 2.1 structure produced here::
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime, timezone
+
+from ifcurl.url import IfcUrl
 
 _VERSION_XML = b"""\
 <?xml version="1.0" encoding="utf-8"?>
@@ -182,3 +185,55 @@ def build_bcf(
                 ),
             )
     return buf.getvalue()
+
+
+def bcf_viewpoint_to_ifc_url(base: IfcUrl, viewpoint: dict) -> str:
+    """Convert a BCF 3.0 REST viewpoint dict to an ifc:// URL.
+
+    Applies camera, clipping planes, and component selection from the BCF
+    viewpoint to *base*, which supplies the repo/ref/path context.
+    Returns the resulting ifc:// URL string.
+    """
+    camera: tuple[float, ...] | None = None
+    fov: float | None = None
+    scale: float | None = None
+
+    if pc := viewpoint.get("perspective_camera"):
+        p, d, u = pc["camera_view_point"], pc["camera_direction"], pc["camera_up_vector"]
+        camera = (p["x"], p["y"], p["z"], d["x"], d["y"], d["z"], u["x"], u["y"], u["z"])
+        fov = float(pc["field_of_view"])
+    elif oc := viewpoint.get("orthogonal_camera"):
+        p, d, u = oc["camera_view_point"], oc["camera_direction"], oc["camera_up_vector"]
+        camera = (p["x"], p["y"], p["z"], d["x"], d["y"], d["z"], u["x"], u["y"], u["z"])
+        scale = float(oc["view_to_world_scale"])
+
+    clips: list[tuple[float, ...]] = []
+    for cp in viewpoint.get("clipping_planes", []):
+        loc, dir_ = cp["location"], cp["direction"]
+        clips.append((loc["x"], loc["y"], loc["z"], dir_["x"], dir_["y"], dir_["z"]))
+
+    components = viewpoint.get("components", {})
+    vis = components.get("visibility", {})
+    default_visible = vis.get("default_visibility", True)
+    exceptions = [e["ifc_guid"] for e in vis.get("exceptions", []) if "ifc_guid" in e]
+    selected = [s["ifc_guid"] for s in components.get("selection", []) if "ifc_guid" in s]
+
+    if not default_visible:
+        # exceptions are the only visible elements → isolate
+        guids = exceptions
+        visibility = "isolate"
+    else:
+        guids = selected
+        visibility = "highlight"
+
+    selector = "+".join(guids) if guids else None
+
+    return dataclasses.replace(
+        base,
+        camera=camera,  # type: ignore[arg-type]
+        fov=fov,
+        scale=scale,
+        clips=clips,  # type: ignore[arg-type]
+        selector=selector,
+        visibility=visibility,
+    ).to_string()

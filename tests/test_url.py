@@ -300,3 +300,77 @@ def test_clip_wrong_count():
 def test_unknown_visibility():
     with pytest.raises(ValueError, match="visibility"):
         IfcUrl.parse("ifc://example.com/o/r@HEAD?path=m.ifc&visibility=wireframe")
+
+
+# ---------------------------------------------------------------------------
+# to_string()
+# ---------------------------------------------------------------------------
+
+
+def test_to_string_roundtrip_simple():
+    raw = "ifc://example.com/org/repo@heads/main?path=models/building.ifc"
+    assert IfcUrl.parse(raw).to_string() == raw
+
+
+def test_to_string_roundtrip_ssh():
+    raw = "ifc://git@example.com/org/repo@abc123?path=model.ifc"
+    assert IfcUrl.parse(raw).to_string() == raw
+
+
+def test_to_string_roundtrip_local():
+    raw = "ifc:///home/alice/project@HEAD?path=model.ifc"
+    assert IfcUrl.parse(raw).to_string() == raw
+
+
+def test_to_string_roundtrip_perspective_camera():
+    raw = (
+        "ifc://example.com/o/r@heads/main"
+        "?path=model.ifc&camera=1.0,2.0,3.0,0.0,0.0,-1.0,0.0,1.0,0.0&fov=60.0"
+    )
+    url = IfcUrl.parse(raw)
+    parsed_back = IfcUrl.parse(url.to_string())
+    assert parsed_back.camera == url.camera
+    assert parsed_back.fov == url.fov
+    assert parsed_back.scale is None
+
+
+def test_to_string_roundtrip_orthographic_with_clip():
+    raw = (
+        "ifc://example.com/o/r@tags/v2.0"
+        "?path=model.ifc&camera=0.0,0.0,8.0,0.0,0.0,-1.0,0.0,1.0,0.0"
+        "&scale=50.0&clip=0.0,0.0,5.0,0.0,0.0,-1.0"
+    )
+    url = IfcUrl.parse(raw)
+    parsed_back = IfcUrl.parse(url.to_string())
+    assert parsed_back.scale == 50.0
+    assert parsed_back.clips == [(0.0, 0.0, 5.0, 0.0, 0.0, -1.0)]
+
+
+def test_to_string_selector_encoded():
+    url = IfcUrl.parse(
+        "ifc://example.com/o/r@HEAD?path=m.ifc&selector=IfcWall%2BIfcSlab"
+    )
+    assert "selector=IfcWall%2BIfcSlab" in url.to_string()
+
+
+def test_to_string_no_params():
+    url = IfcUrl.parse("ifc://example.com/org/repo@HEAD?path=m.ifc")
+    s = url.to_string()
+    assert s.startswith("ifc://example.com/org/repo@HEAD")
+    assert "path=m.ifc" in s
+
+
+def test_to_string_visibility_ghost():
+    url = IfcUrl.parse(
+        "ifc://example.com/o/r@HEAD?path=m.ifc"
+        "&camera=0.0,0.0,5.0,0.0,0.0,-1.0,0.0,1.0,0.0&fov=60.0&visibility=ghost"
+    )
+    assert "visibility=ghost" in url.to_string()
+
+
+def test_to_string_omits_default_visibility():
+    url = IfcUrl.parse(
+        "ifc://example.com/o/r@HEAD?path=m.ifc"
+        "&camera=0.0,0.0,5.0,0.0,0.0,-1.0,0.0,1.0,0.0&fov=60.0"
+    )
+    assert "visibility" not in url.to_string()
