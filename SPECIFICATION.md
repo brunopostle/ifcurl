@@ -251,8 +251,10 @@ The camera and selection in an IFC URL map directly to BCF viewpoint concepts.
 4. Populate `Components/Selection` with the resolved GUIDs
 
 **BCF viewpoint to IFC URL:**
-1. Extract the GUID list from `Components/Selection`
-2. Construct an IfcOpenShell GUID selector
+1. Extract the GUID list from `Components/Selection`; if `DefaultVisibility`
+   is false, use the GUIDs from `Visibility/Exceptions` instead and set
+   `visibility=isolate`
+2. Construct an IfcOpenShell GUID selector (bare GUIDs joined with `+`)
 3. Convert the BCF camera to `camera`, `fov` or `scale` parameters
 4. Convert clipping planes to `clip` parameters
 

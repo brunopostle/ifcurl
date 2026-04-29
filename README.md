@@ -234,6 +234,27 @@ png = render(model, selector=url.selector, clips=url.clips or None,
              camera=url.camera, fov=url.fov, visibility=url.visibility)
 ```
 
+Serialise a parsed URL back to a string with `.to_string()`:
+
+```python
+url = IfcUrl.parse("ifc://example.com/org/repo@heads/main?path=model.ifc")
+modified = dataclasses.replace(url, selector="IfcWall", visibility="ghost")
+print(modified.to_string())
+# ifc://example.com/org/repo@heads/main?path=model.ifc&selector=IfcWall&visibility=ghost
+```
+
+Convert a BCF 3.0 REST viewpoint dict to an `ifc://` URL (§6 reverse direction):
+
+```python
+from ifcurl.bcf import bcf_viewpoint_to_ifc_url
+
+base = IfcUrl.parse("ifc://example.com/org/repo@heads/main?path=model.ifc")
+ifc_url = bcf_viewpoint_to_ifc_url(base, viewpoint_dict)
+```
+
+`viewpoint_dict` is a BCF 3.0 REST API viewpoint object (camera, clipping planes,
+component selection/visibility). The repo/ref/path context comes from `base`.
+
 Remote repositories are cloned as bare repos to the OS cache directory (`~/.cache/ifcurl/` on Linux) on first use. Mutable refs (`@heads/`, `@HEAD`) trigger a `git fetch`; immutable refs (commit hashes, tags) use the cache as-is.
 
 For private repositories, configure tokens per host in `~/.config/ifcurl/tokens.json`:
