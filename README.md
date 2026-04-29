@@ -137,6 +137,7 @@ ifcurl serve --host 0.0.0.0 --port 9000 --allowed-hosts git.example.com
 | `GET /select?url=ifc://…` | Resolve a complex selector server-side; returns JSON list of GlobalIds |
 | `GET /render_diff?base=ifc://…&head=ifc://…` | Render a colour-coded diff PNG (added green, removed red) |
 | `GET /foundation/versions` | OpenCDE Foundation API discovery — lists BCF and Documents API endpoints (proxy at `/foundation/` on the Forgejo hostname) |
+| `POST /documents/1.0/document-versions` | OpenCDE Documents API — resolve document_ids to versioned download URLs (proxied at `/documents/`) |
 | `GET /bcf/3.0/projects` | BCF 3.0 — list repositories as BCF projects |
 | `GET/POST /bcf/3.0/projects/{owner}/{repo}/topics` | BCF 3.0 — list or create topics (Forgejo issues) |
 | `GET/PUT /bcf/3.0/projects/{owner}/{repo}/topics/{guid}` | BCF 3.0 — get or update a topic |
@@ -159,6 +160,7 @@ The BCF API forwards the client's `Authorization: Bearer` header to Forgejo's RE
 ```nginx
 location /foundation/ { proxy_pass http://localhost:8000/foundation/; }
 location /bcf/        { proxy_pass http://localhost:8000/bcf/; }
+location /documents/  { proxy_pass http://localhost:8000/documents/; }
 ```
 
 **Caching:**
