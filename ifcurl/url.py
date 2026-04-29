@@ -205,3 +205,41 @@ class IfcUrl:
         Mutable refs (HEAD, branches) must not be cached at the rendered-PNG tier.
         """
         return self.ref == "HEAD" or self.ref.startswith("heads/")
+
+    def to_string(self) -> str:
+        """Serialize to an ifc:// URL string."""
+        from urllib.parse import quote
+
+        if self.transport == "local":
+            authority = ""
+            path = self.repo_path
+        elif self.transport == "ssh":
+            authority = f"{self.user}@{self.host}"
+            path = f"/{self.repo_path}"
+        else:  # https
+            authority = self.host
+            path = f"/{self.repo_path}"
+
+        base = f"ifc://{authority}{path}@{self.ref}"
+
+        parts = []
+        if self.path:
+            parts.append(f"path={quote(self.path, safe='/')}")
+        if self.selector:
+            parts.append(f"selector={quote(self.selector, safe='$')}")
+        if self.camera:
+            vals = ",".join(repr(v) for v in self.camera)
+            parts.append(f"camera={vals}")
+        if self.fov is not None:
+            parts.append(f"fov={self.fov!r}")
+        if self.scale is not None:
+            parts.append(f"scale={self.scale!r}")
+        for clip in self.clips:
+            vals = ",".join(repr(v) for v in clip)
+            parts.append(f"clip={vals}")
+        if self.visibility != "highlight":
+            parts.append(f"visibility={self.visibility}")
+
+        if parts:
+            return base + "?" + "&".join(parts)
+        return base
