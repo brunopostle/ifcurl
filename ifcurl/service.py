@@ -52,6 +52,7 @@ from pydantic import BaseModel
 
 from ifcurl.auth import get_token_for_host
 from ifcurl.bcf import build_bcf
+from ifcurl.bcf_api import router as bcf_router
 from ifcurl.git import diff_text as git_diff_text
 from ifcurl.git import fetch_ifc
 from ifcurl.render_service import _sandboxed_diff, _sandboxed_pipeline, _sandboxed_select
@@ -172,6 +173,7 @@ app = FastAPI(
     description="Renders ifc:// URLs to PNG images for embedding in Gitea and other consumers.",
     version="0.0.0",
 )
+app.include_router(bcf_router)
 
 # ---------------------------------------------------------------------------
 # Rate limiting (in-process, per client IP, sliding window)

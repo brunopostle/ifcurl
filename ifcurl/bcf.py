@@ -30,12 +30,15 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import re
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime, timezone
 
 from ifcurl.url import IfcUrl
+
+_IFC_GUID_RE = re.compile(r"^[0-9A-Za-z_$]{22}$")
 
 _VERSION_XML = b"""\
 <?xml version="1.0" encoding="utf-8"?>
@@ -237,3 +240,50 @@ def bcf_viewpoint_to_ifc_url(base: IfcUrl, viewpoint: dict) -> str:
         selector=selector,
         visibility=visibility,
     ).to_string()
+
+
+def ifc_url_to_bcf_viewpoint(ifc_url: IfcUrl, guid: str) -> dict:
+    """Convert an IfcUrl to a BCF 3.0 REST viewpoint dict.
+
+    Only GUID selectors (bare 22-char IFC GlobalIds joined with '+') are
+    mapped to BCF components/selection.  Complex IfcOpenShell expressions
+    (e.g. 'IfcWall') cannot be expanded without the model and are omitted.
+    """
+    vp: dict = {"guid": guid, "lines": [], "clipping_planes": []}
+
+    if ifc_url.camera is not None:
+        px, py, pz, dx, dy, dz, ux, uy, uz = ifc_url.camera
+        cam = {
+            "camera_view_point": {"x": px, "y": py, "z": pz},
+            "camera_direction": {"x": dx, "y": dy, "z": dz},
+            "camera_up_vector": {"x": ux, "y": uy, "z": uz},
+        }
+        if ifc_url.fov is not None:
+            vp["perspective_camera"] = {**cam, "field_of_view": ifc_url.fov}
+        elif ifc_url.scale is not None:
+            vp["orthogonal_camera"] = {**cam, "view_to_world_scale": ifc_url.scale}
+
+    for px, py, pz, nx, ny, nz in ifc_url.clips:
+        vp["clipping_planes"].append({
+            "location": {"x": px, "y": py, "z": pz},
+            "direction": {"x": nx, "y": ny, "z": nz},
+        })
+
+    selection: list[dict] = []
+    default_visibility = True
+    exceptions: list[dict] = []
+
+    if ifc_url.selector:
+        guid_parts = [p.strip() for p in ifc_url.selector.split("+") if _IFC_GUID_RE.match(p.strip())]
+        if guid_parts:
+            if ifc_url.visibility == "isolate":
+                default_visibility = False
+                exceptions = [{"ifc_guid": g} for g in guid_parts]
+            else:
+                selection = [{"ifc_guid": g, "originating_system": "ifcurl", "authoring_tool_id": "ifcurl"} for g in guid_parts]
+
+    vp["components"] = {
+        "selection": selection,
+        "visibility": {"default_visibility": default_visibility, "exceptions": exceptions},
+    }
+    return vp

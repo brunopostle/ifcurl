@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from ifcurl.service import (
+    _rate_hits,
     _t2_cache,
     _t2_get,
     _t2_put,
@@ -36,6 +37,7 @@ def clear_caches(tmp_path, monkeypatch):
     monkeypatch.setattr("ifcurl.service.user_cache_dir", lambda *a, **kw: str(tmp_path))
     _t2_cache.clear()
     _t3_cache.clear()
+    _rate_hits.clear()
     configure_allowed_hosts(None)
     yield
     _t2_cache.clear()
