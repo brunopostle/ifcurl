@@ -136,6 +136,9 @@ ifcurl serve --host 0.0.0.0 --port 9000 --allowed-hosts git.example.com
 | `POST /bcf` | Generate a BCF 2.1 zip from an ifc:// URL viewpoint |
 | `GET /select?url=ifc://…` | Resolve a complex selector server-side; returns JSON list of GlobalIds |
 | `GET /render_diff?base=ifc://…&head=ifc://…` | Render a colour-coded diff PNG (added green, removed red) |
+| `GET /foundation/versions` | OpenCDE Foundation API discovery — lists BCF and Documents API endpoints (proxy at `/foundation/` on the Forgejo hostname) |
+
+The Foundation endpoint derives its public base URL from `X-Forwarded-Host` and `X-Forwarded-Proto` headers set by the reverse proxy, so no extra configuration is needed.
 
 **Caching:**
 
