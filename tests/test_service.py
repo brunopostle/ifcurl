@@ -1,4 +1,4 @@
-"""Tests for ifcurl.service — POST /preview endpoint and caching."""
+"""Tests for ifcurl.service — preview, BCF, and OpenCDE Foundation endpoints."""
 
 from __future__ import annotations
 
@@ -554,3 +554,48 @@ class TestSSRF:
                 json={"url": "ifc://localhost:3000/org/repo@heads/main?path=model.ifc"},
             )
         assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# GET /foundation/versions
+# ---------------------------------------------------------------------------
+
+
+class TestFoundationVersions:
+    def test_returns_200(self):
+        r = client.get("/foundation/versions")
+        assert r.status_code == 200
+
+    def test_returns_versions_array(self):
+        r = client.get("/foundation/versions")
+        data = r.json()
+        assert "versions" in data
+        assert isinstance(data["versions"], list)
+
+    def test_includes_foundation_bcf_documents(self):
+        r = client.get("/foundation/versions")
+        api_ids = {v["api_id"] for v in r.json()["versions"]}
+        assert api_ids >= {"foundation", "bcf", "documents"}
+
+    def test_bcf_version_is_3_0(self):
+        r = client.get("/foundation/versions")
+        bcf = next(v for v in r.json()["versions"] if v["api_id"] == "bcf")
+        assert bcf["version_id"] == "3.0"
+
+    def test_api_base_url_uses_forwarded_host(self):
+        r = client.get(
+            "/foundation/versions",
+            headers={"x-forwarded-host": "git.example.com", "x-forwarded-proto": "https"},
+        )
+        bcf = next(v for v in r.json()["versions"] if v["api_id"] == "bcf")
+        assert bcf["api_base_url"] == "https://git.example.com/bcf/3.0"
+
+    def test_api_base_url_falls_back_to_host_header(self):
+        r = client.get("/foundation/versions", headers={"host": "forge.local"})
+        bcf = next(v for v in r.json()["versions"] if v["api_id"] == "bcf")
+        assert "forge.local" in bcf["api_base_url"]
+
+    def test_no_auth_required(self):
+        # Endpoint must be public — no 401/403 even without credentials
+        r = client.get("/foundation/versions")
+        assert r.status_code not in (401, 403)

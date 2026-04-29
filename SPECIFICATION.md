@@ -358,8 +358,8 @@ is not used in `ifc://` URLs.
 
 1. **Discover APIs** — `GET https://host/foundation/versions`. This endpoint
    is public and requires no authentication. It returns the base URLs for all
-   OpenCDE APIs on this server, including the Documents API endpoint and OAuth2
-   configuration.
+   OpenCDE APIs on this server (Foundation API 1.1 format: `versions` array
+   with `api_id`, `version_id`, `detailed_version`, `api_base_url` per entry).
 
 2. **Authenticate** — OAuth2 authorization code or implicit flow, using the
    configuration obtained from step 1. Credentials are never embedded in the

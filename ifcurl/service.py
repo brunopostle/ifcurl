@@ -45,7 +45,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from platformdirs import user_cache_dir
 from pydantic import BaseModel
@@ -703,6 +703,44 @@ def select(request: SelectRequest) -> JSONResponse:
 
     _t3_put(hexsha, ifc_url.path, ifc_url.selector, frozenset(guids))
     return JSONResponse({"guids": guids})
+
+
+@app.get("/foundation/versions")
+def foundation_versions(request: Request) -> JSONResponse:
+    """OpenCDE Foundation API discovery endpoint.
+
+    Public, no auth required. Returns the base URLs for all OpenCDE APIs
+    supported by this server. Proxied at /foundation/versions on the
+    Forgejo hostname via nginx/Caddy.
+
+    The public base URL is derived from X-Forwarded-Host and X-Forwarded-Proto
+    headers set by the reverse proxy.
+    """
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "localhost")
+    proto = request.headers.get("x-forwarded-proto", "https")
+    base = f"{proto}://{host}"
+    return JSONResponse({
+        "versions": [
+            {
+                "api_id": "foundation",
+                "version_id": "1.1",
+                "detailed_version": "https://github.com/buildingSMART/foundation-API/tree/release_1_1",
+                "api_base_url": f"{base}/foundation/1.1",
+            },
+            {
+                "api_id": "bcf",
+                "version_id": "3.0",
+                "detailed_version": "https://github.com/buildingSMART/BCF-API/tree/release_3_0",
+                "api_base_url": f"{base}/bcf/3.0",
+            },
+            {
+                "api_id": "documents",
+                "version_id": "1.0",
+                "detailed_version": "https://github.com/buildingSMART/documents-API/tree/release_1_0",
+                "api_base_url": f"{base}/documents/1.0",
+            },
+        ]
+    })
 
 
 @app.get("/render_diff")
