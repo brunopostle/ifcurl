@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import base64
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ifcurl.bcf_api import _auth, _fget
@@ -133,6 +133,24 @@ def _versions_for_file(owner: str, repo: str, path: str, auth: str | None, forge
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
+
+@router.get("/document-metadata/{document_id}")
+def get_document_metadata(document_id: str, request: Request) -> JSONResponse:
+    """Return metadata for a single document_id."""
+    auth = _auth(request)
+    try:
+        owner, repo, path = decode_document_id(document_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Invalid document_id")
+    info = _fget(f"/api/v1/repos/{owner}/{repo}/contents/{path}", auth)
+    if not isinstance(info, dict):
+        raise HTTPException(status_code=404, detail="File not found")
+    return JSONResponse({
+        "document_id": document_id,
+        "name": info.get("name", path.rsplit("/", 1)[-1]),
+        "description": f"{owner}/{repo}/{path}",
+    })
+
 
 @router.post("/document-versions")
 def document_versions(request: Request, body: dict = Body(default={})) -> JSONResponse:

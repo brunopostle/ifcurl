@@ -246,7 +246,19 @@ def get_extensions(owner: str, repo: str) -> JSONResponse:
 @router.get("/projects/{owner}/{repo}/topics")
 def list_topics(owner: str, repo: str, request: Request) -> JSONResponse:
     auth = _auth(request)
-    issues = _fget(f"/api/v1/repos/{owner}/{repo}/issues", auth, params={"type": "issues", "state": "open", "limit": 50})
+    qp = request.query_params
+    forgejo_params: dict = {"type": "issues", "limit": 50}
+    status = qp.get("topic_status")
+    forgejo_params["state"] = _STATUS_REVERSE.get(status, "open") if status else "open"
+    if assigned_to := qp.get("assigned_to"):
+        forgejo_params["assignee"] = assigned_to
+    if label := qp.get("label"):
+        forgejo_params["label"] = label
+    if since := qp.get("modified_after"):
+        forgejo_params["since"] = since
+    if before := qp.get("modified_before"):
+        forgejo_params["before"] = before
+    issues = _fget(f"/api/v1/repos/{owner}/{repo}/issues", auth, params=forgejo_params)
     return JSONResponse([_issue_to_topic(i, owner, repo) for i in (issues if isinstance(issues, list) else [])])
 
 

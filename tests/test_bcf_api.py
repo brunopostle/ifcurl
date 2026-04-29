@@ -196,6 +196,60 @@ class TestTopicRoutes:
         assert len(topics) == 2
         assert topics[0]["title"] == "Crack in wall"
 
+    def test_list_topics_default_state_is_open(self):
+        captured = {}
+        def mock_fget(path, auth, params=None):
+            captured.update(params or {})
+            return [ISSUE_1]
+        with patch("ifcurl.bcf_api._fget", side_effect=mock_fget):
+            client.get(f"/bcf/3.0/projects/{OWNER}/{REPO}/topics", headers={"Authorization": AUTH})
+        assert captured.get("state") == "open"
+
+    def test_list_topics_filter_closed(self):
+        captured = {}
+        def mock_fget(path, auth, params=None):
+            captured.update(params or {})
+            return [ISSUE_2]
+        with patch("ifcurl.bcf_api._fget", side_effect=mock_fget):
+            client.get(f"/bcf/3.0/projects/{OWNER}/{REPO}/topics?topic_status=Closed", headers={"Authorization": AUTH})
+        assert captured.get("state") == "closed"
+
+    def test_list_topics_filter_open(self):
+        captured = {}
+        def mock_fget(path, auth, params=None):
+            captured.update(params or {})
+            return [ISSUE_1]
+        with patch("ifcurl.bcf_api._fget", side_effect=mock_fget):
+            client.get(f"/bcf/3.0/projects/{OWNER}/{REPO}/topics?topic_status=Open", headers={"Authorization": AUTH})
+        assert captured.get("state") == "open"
+
+    def test_list_topics_filter_assigned_to(self):
+        captured = {}
+        def mock_fget(path, auth, params=None):
+            captured.update(params or {})
+            return [ISSUE_1]
+        with patch("ifcurl.bcf_api._fget", side_effect=mock_fget):
+            client.get(f"/bcf/3.0/projects/{OWNER}/{REPO}/topics?assigned_to=alice", headers={"Authorization": AUTH})
+        assert captured.get("assignee") == "alice"
+
+    def test_list_topics_filter_label(self):
+        captured = {}
+        def mock_fget(path, auth, params=None):
+            captured.update(params or {})
+            return [ISSUE_1]
+        with patch("ifcurl.bcf_api._fget", side_effect=mock_fget):
+            client.get(f"/bcf/3.0/projects/{OWNER}/{REPO}/topics?label=urgent", headers={"Authorization": AUTH})
+        assert captured.get("label") == "urgent"
+
+    def test_list_topics_filter_modified_after(self):
+        captured = {}
+        def mock_fget(path, auth, params=None):
+            captured.update(params or {})
+            return [ISSUE_1]
+        with patch("ifcurl.bcf_api._fget", side_effect=mock_fget):
+            client.get(f"/bcf/3.0/projects/{OWNER}/{REPO}/topics?modified_after=2026-01-01T00:00:00Z", headers={"Authorization": AUTH})
+        assert captured.get("since") == "2026-01-01T00:00:00Z"
+
     def test_get_topic(self):
         tguid = make_topic_guid(OWNER, REPO, 1)
         with patch("ifcurl.bcf_api._fget", return_value=ISSUE_1):
