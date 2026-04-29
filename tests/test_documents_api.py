@@ -176,3 +176,47 @@ class TestDocumentVersions:
         doc_id = encode_document_id(OWNER, REPO, PATH)
         r = _post([doc_id], tags=[], head_commits=[])
         assert r.json() == []
+
+
+# ---------------------------------------------------------------------------
+# GET /documents/1.0/document-metadata/{document_id}
+# ---------------------------------------------------------------------------
+
+FORGEJO_FILE_INFO = {
+    "name": "building.ifc",
+    "path": PATH,
+    "sha": "abcdef1234567890",
+    "size": 98765,
+    "type": "file",
+}
+
+
+class TestDocumentMetadata:
+    def test_returns_200(self):
+        doc_id = encode_document_id(OWNER, REPO, PATH)
+        with patch("ifcurl.documents_api._fget", return_value=FORGEJO_FILE_INFO):
+            r = client.get(f"/documents/1.0/document-metadata/{doc_id}")
+        assert r.status_code == 200
+
+    def test_returns_document_id(self):
+        doc_id = encode_document_id(OWNER, REPO, PATH)
+        with patch("ifcurl.documents_api._fget", return_value=FORGEJO_FILE_INFO):
+            r = client.get(f"/documents/1.0/document-metadata/{doc_id}")
+        assert r.json()["document_id"] == doc_id
+
+    def test_returns_filename(self):
+        doc_id = encode_document_id(OWNER, REPO, PATH)
+        with patch("ifcurl.documents_api._fget", return_value=FORGEJO_FILE_INFO):
+            r = client.get(f"/documents/1.0/document-metadata/{doc_id}")
+        assert r.json()["name"] == "building.ifc"
+
+    def test_invalid_document_id_returns_404(self):
+        r = client.get("/documents/1.0/document-metadata/not-valid!!!!")
+        assert r.status_code == 404
+
+    def test_forgejo_404_propagates(self):
+        from fastapi import HTTPException
+        doc_id = encode_document_id(OWNER, REPO, PATH)
+        with patch("ifcurl.documents_api._fget", side_effect=HTTPException(status_code=404)):
+            r = client.get(f"/documents/1.0/document-metadata/{doc_id}")
+        assert r.status_code == 404
