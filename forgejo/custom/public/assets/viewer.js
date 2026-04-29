@@ -431,6 +431,7 @@ function setupClipper(components, world, clips) {
     clipMode = !clipMode;
     clipBtn.classList.toggle("active", clipMode);
     container.style.cursor = clipMode ? "crosshair" : "";
+    statusEl.textContent = clipMode ? "Double-click model surface to place clip plane" : "";
   });
   container.addEventListener("dblclick", async () => {
     if (!clipMode) return;
