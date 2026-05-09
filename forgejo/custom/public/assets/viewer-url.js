@@ -28,17 +28,19 @@ export function parseIfcUrl(raw) {
     host, userAt, repoSuffix, ref,
     path:     qs.get("path")     ?? "",
     selector: qs.get("selector") ?? "",
+    query:    qs.get("query")    ?? "",
     camera:   qs.get("camera")   ?? "",
     fov:      qs.get("fov")      ?? "",
     scale:    qs.get("scale")    ?? "",
   };
 }
 
-export function buildIfcUrl(repo, ref, path, selector) {
+export function buildIfcUrl(repo, ref, path, selector, query) {
   if (!repo || !ref) return null;
   const qs = new URLSearchParams();
   if (path)     qs.set("path",     path);
   if (selector) qs.set("selector", selector);
+  if (query)    qs.set("query",    query);
   const qsStr = qs.toString().replace(/%2C/g, ",").replace(/%2B/g, "+").replace(/%24/g, "$");
   return `ifc://${repo}@${ref}${qsStr ? "?" + qsStr : ""}`;
 }
