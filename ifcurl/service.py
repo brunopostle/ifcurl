@@ -787,6 +787,18 @@ def query(request: QueryRequest) -> JSONResponse:
     if not ifc_url.query:
         raise HTTPException(status_code=400, detail="URL has no 'query' parameter")
 
+    query_path = ifc_url.query
+    if "." not in query_path and (
+        query_path.startswith("Pset_") or query_path.startswith("Qto_")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'query={query_path}' looks like a property set name — "
+                f"use dot notation: '{query_path}.PropertyName'"
+            ),
+        )
+
     _ssrf_check(ifc_url)
 
     token = request.token
