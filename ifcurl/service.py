@@ -126,9 +126,7 @@ def _select_via_socket(ifc_bytes: bytes, selector: str) -> list[str]:
     return resp.json()["guids"]
 
 
-def _clash_via_socket(
-    ifc_bytes: bytes, selector_a: str, selector_b: str | None
-) -> list[list[str]]:
+def _clash_via_socket(ifc_bytes: bytes, selector: str) -> list[list[str]]:
     """Delegate clash detection to the render service over the Unix socket."""
     import httpx
 
@@ -137,7 +135,7 @@ def _clash_via_socket(
             resp = client.post(
                 "http://render/clash",
                 files={"ifc": ifc_bytes},
-                data={"selector_a": selector_a, "selector_b": selector_b or ""},
+                data={"selector": selector},
                 timeout=_RENDER_TIMEOUT,
             )
     except httpx.TransportError as exc:
@@ -450,8 +448,6 @@ class QueryRequest(BaseModel):
 
 class ClashRequest(BaseModel):
     url: str
-    selector_b: str | None = None
-    """Second element set to test against. When omitted, set A is tested against all other model elements."""
     token: str | None = None
 
 
@@ -829,21 +825,18 @@ def query(request: QueryRequest) -> JSONResponse:
 
 
 @app.get("/clash")
-def clash_get(url: str, selector_b: str | None = None, token: str | None = None) -> JSONResponse:
+def clash_get(url: str, token: str | None = None) -> JSONResponse:
     """GET variant of POST /clash."""
-    return clash(ClashRequest(url=url, selector_b=selector_b, token=token))
+    return clash(ClashRequest(url=url, token=token))
 
 
 @app.post("/clash")
 def clash(request: ClashRequest) -> JSONResponse:
-    """Detect geometric clashes between two sets of elements.
+    """Detect geometric clashes within the elements matched by the selector.
 
-    Set A is defined by the URL's ``selector=`` parameter.  Set B is defined
-    by ``selector_b``; when omitted, set A is tested against all other
-    model elements.
-
-    Uses ifcopenshell hard-clash (interpenetration) detection.  Returns
-    ``{"pairs": [["<guidA>", "<guidB>"], …]}``.
+    The URL's ``selector=`` parameter defines the set of elements to test
+    against each other.  Uses ifcopenshell hard-clash (interpenetration)
+    detection.  Returns ``{"pairs": [["<guidA>", "<guidB>"], …]}``.
     """
     try:
         ifc_url = IfcUrl.parse(request.url)
@@ -877,11 +870,9 @@ def clash(request: ClashRequest) -> JSONResponse:
 
     try:
         if _RENDER_SOCKET:
-            pairs = _clash_via_socket(ifc_bytes, ifc_url.selector, request.selector_b)
+            pairs = _clash_via_socket(ifc_bytes, ifc_url.selector)
         else:
-            pairs = run_sandboxed(
-                _sandboxed_clash, ifc_bytes, ifc_url.selector, request.selector_b
-            )
+            pairs = run_sandboxed(_sandboxed_clash, ifc_bytes, ifc_url.selector)
     except SandboxCrashError as exc:
         raise HTTPException(
             status_code=422, detail=f"IFC clash detection crashed: {exc}"

@@ -106,10 +106,8 @@ def _sandboxed_select(ifc_bytes: bytes, selector: str) -> list[str]:
     return [e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId]
 
 
-def _sandboxed_clash(
-    ifc_bytes: bytes, selector_a: str, selector_b: str | None
-) -> list[list[str]]:
-    """Detect geometric clashes between two sets of IFC elements.
+def _sandboxed_clash(ifc_bytes: bytes, selector: str) -> list[list[str]]:
+    """Detect geometric clashes within the elements matched by selector.
 
     Uses ifcopenshell.geom.tree.clash_collision_many for mesh-level
     interpenetration detection (hard clashes only, touching excluded).
@@ -124,32 +122,21 @@ def _sandboxed_clash(
     settings = ifcopenshell.geom.settings()
     settings.set("use-world-coords", True)
 
-    elems_a = list(ifcopenshell.util.selector.filter_elements(model, selector_a))
-    ids_a = {e.id() for e in elems_a}
-
-    if selector_b:
-        elems_b = list(ifcopenshell.util.selector.filter_elements(model, selector_b))
-    else:
-        elems_b = [
-            e
-            for e in model.by_type("IfcProduct")
-            if e.id() not in ids_a and getattr(e, "GlobalId", None)
-        ]
-
-    if not elems_a or not elems_b:
+    elems = list(ifcopenshell.util.selector.filter_elements(model, selector))
+    if len(elems) < 2:
         return []
 
     tree = ifcopenshell.geom.tree()
     tree.add_file(model, settings)
 
-    clashes = tree.clash_collision_many(elems_a, elems_b, allow_touching=False)
+    clashes = tree.clash_collision_many(elems, elems, allow_touching=False)
 
     pairs: list[list[str]] = []
     seen: set[frozenset[str]] = set()
     for c in clashes:
         guid_a = getattr(c.a, "GlobalId", None)
         guid_b = getattr(c.b, "GlobalId", None)
-        if not guid_a or not guid_b:
+        if not guid_a or not guid_b or guid_a == guid_b:
             continue
         key = frozenset((guid_a, guid_b))
         if key not in seen:
@@ -321,20 +308,16 @@ async def select_endpoint(
 @app.post("/clash")
 async def clash_endpoint(
     ifc: UploadFile = File(...),
-    selector_a: str = Form(...),
-    selector_b: str = Form(""),
+    selector: str = Form(...),
 ) -> Response:
-    """Detect clashing element pairs.
+    """Detect clashing element pairs within the selected set.
 
     Returns JSON ``{"pairs": [["guidA", "guidB"], ...]}``.
-    An empty ``selector_b`` means test set A against all other model elements.
     """
     ifc_bytes = await ifc.read()
 
     try:
-        pairs = run_sandboxed(
-            _sandboxed_clash, ifc_bytes, selector_a, selector_b or None
-        )
+        pairs = run_sandboxed(_sandboxed_clash, ifc_bytes, selector)
     except SandboxCrashError as exc:
         raise HTTPException(status_code=422, detail=f"IFC clash detection crashed: {exc}") from exc
     except SandboxTimeoutError as exc:
