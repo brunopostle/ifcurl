@@ -158,6 +158,38 @@ def test_visibility_isolate():
     assert url.visibility == "isolate"
 
 
+def test_visibility_clash():
+    url = IfcUrl.parse("ifc://example.com/org/repo@HEAD?path=m.ifc&visibility=clash")
+    assert url.visibility == "clash"
+
+
+def test_query_attribute():
+    url = IfcUrl.parse("ifc://example.com/org/repo@HEAD?path=m.ifc&selector=IfcWall&query=Name")
+    assert url.query == "Name"
+
+
+def test_query_pset():
+    url = IfcUrl.parse(
+        "ifc://example.com/org/repo@HEAD?path=m.ifc&selector=IfcWall&query=Pset_WallCommon.FireRating"
+    )
+    assert url.query == "Pset_WallCommon.FireRating"
+
+
+def test_query_absent():
+    url = IfcUrl.parse("ifc://example.com/org/repo@HEAD?path=m.ifc")
+    assert url.query is None
+
+
+def test_query_with_view_params():
+    url = IfcUrl.parse(
+        "ifc://example.com/org/repo@HEAD?path=m.ifc"
+        "&selector=IfcWall&camera=10,20,5,0,-1,0,0,0,1&fov=60&query=Name"
+    )
+    assert url.query == "Name"
+    assert url.camera is not None
+    assert url.fov == 60.0
+
+
 # ---------------------------------------------------------------------------
 # git_remote_url()
 # ---------------------------------------------------------------------------
@@ -300,6 +332,37 @@ def test_clip_wrong_count():
 def test_unknown_visibility():
     with pytest.raises(ValueError, match="visibility"):
         IfcUrl.parse("ifc://example.com/o/r@HEAD?path=m.ifc&visibility=wireframe")
+
+
+def test_to_string_roundtrip_query():
+    raw = "ifc://example.com/org/repo@heads/main?path=m.ifc&selector=IfcWall&query=Pset_WallCommon.FireRating"
+    assert IfcUrl.parse(raw).to_string() == raw
+
+
+def test_to_string_roundtrip_visibility_clash():
+    raw = "ifc://example.com/org/repo@heads/main?path=m.ifc&selector=IfcWall&visibility=clash"
+    assert IfcUrl.parse(raw).to_string() == raw
+
+
+def test_spec_example_query():
+    url = IfcUrl.parse(
+        "ifc://example.com/org/project@heads/main"
+        "?path=models/building.ifc&selector=IfcWall&query=Pset_WallCommon.FireRating"
+    )
+    assert url.query == "Pset_WallCommon.FireRating"
+    assert url.selector == "IfcWall"
+    assert url.camera is None
+
+
+def test_spec_example_clash():
+    url = IfcUrl.parse(
+        "ifc://example.com/org/project@heads/main"
+        "?path=models/building.ifc"
+        "&selector=IfcWall%2C%2BName%3D%22Core%2BWall%22%2BIfcBeam%2C%2BName%3D%22B1%22"
+        "&visibility=clash"
+    )
+    assert url.visibility == "clash"
+    assert url.selector is not None
 
 
 # ---------------------------------------------------------------------------
