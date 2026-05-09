@@ -56,6 +56,11 @@ describe("parseIfcUrl", () => {
     assert.equal(r.selector, "IfcWall");
   });
 
+  test("parses query parameter", () => {
+    const r = parseIfcUrl("ifc://example.com/org/repo@heads/main?selector=IfcWall&query=Pset_WallCommon.FireRating");
+    assert.equal(r.query, "Pset_WallCommon.FireRating");
+  });
+
   test("parses camera parameter", () => {
     const r = parseIfcUrl("ifc://example.com/org/repo@heads/main?camera=1,2,3,4,5,6,7,8,9");
     assert.equal(r.camera, "1,2,3,4,5,6,7,8,9");
@@ -75,6 +80,7 @@ describe("parseIfcUrl", () => {
     const r = parseIfcUrl("ifc://example.com/org/repo@heads/main");
     assert.equal(r.path, "");
     assert.equal(r.selector, "");
+    assert.equal(r.query, "");
     assert.equal(r.camera, "");
     assert.equal(r.fov, "");
     assert.equal(r.scale, "");
@@ -118,6 +124,16 @@ describe("buildIfcUrl", () => {
 
   test("includes both path and selector", () => {
     const url = buildIfcUrl("example.com/org/repo", "heads/main", "model.ifc", "IfcWall");
+    assert.equal(url, "ifc://example.com/org/repo@heads/main?path=model.ifc&selector=IfcWall");
+  });
+
+  test("includes query parameter", () => {
+    const url = buildIfcUrl("example.com/org/repo", "heads/main", "model.ifc", "IfcWall", "Pset_WallCommon.FireRating");
+    assert.equal(url, "ifc://example.com/org/repo@heads/main?path=model.ifc&selector=IfcWall&query=Pset_WallCommon.FireRating");
+  });
+
+  test("omits query when empty", () => {
+    const url = buildIfcUrl("example.com/org/repo", "heads/main", "model.ifc", "IfcWall", "");
     assert.equal(url, "ifc://example.com/org/repo@heads/main?path=model.ifc&selector=IfcWall");
   });
 

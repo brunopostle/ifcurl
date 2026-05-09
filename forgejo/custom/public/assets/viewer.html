@@ -111,6 +111,33 @@
     }
     .meta-row.storey-row.active .meta-name { color: #a8c8ff; }
     .meta-count { font-size: 10px; color: #808088; flex-shrink: 0; }
+    /* Query results panel */
+    #query-panel {
+      position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%);
+      z-index: 10;
+      background: rgba(28,28,30,0.92); backdrop-filter: blur(8px);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+      padding: 8px 10px; min-width: 320px; max-width: 640px;
+      max-height: 200px; overflow-y: auto;
+    }
+    #query-panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    #query-panel-header span {
+      font-size: 10px; color: #606068;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    #query-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    #query-table th {
+      text-align: left; color: #808088; font-weight: normal;
+      padding: 1px 6px 4px 0; border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    #query-table td {
+      padding: 2px 6px 2px 0; color: #f0f0f0; font-family: monospace;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     /* Element properties panel */
     #props-panel {
       position: fixed; bottom: 44px; right: 12px; z-index: 10;
@@ -194,6 +221,13 @@
           <option value="clash">clash</option>
         </select>
       </div>
+      <div class="field" style="flex:2">
+        <label>query</label>
+        <input id="query-input" class="ti" type="text"
+               placeholder="Name or Pset.Property"
+               title="Attribute or property set value to retrieve for each selected element"
+               spellcheck="false">
+      </div>
     </div>
     <!-- Row 3: BCF export/import form (hidden until BCF button clicked) -->
     <div id="bcf-row" class="trow" style="display:none">
@@ -213,6 +247,16 @@
   </div>
   <div id="viewer"></div>
   <div id="meta-panel" style="display:none"></div>
+  <div id="query-panel" style="display:none">
+    <div id="query-panel-header">
+      <span id="query-panel-title">query</span>
+      <button id="query-close-btn" class="tb-btn">✕</button>
+    </div>
+    <table id="query-table">
+      <thead><tr><th>GlobalId</th><th id="query-val-header-col">value</th></tr></thead>
+      <tbody id="query-tbody"></tbody>
+    </table>
+  </div>
   <div id="status"></div>
   <div id="props-panel" style="display:none">
     <div id="props-panel-header">
