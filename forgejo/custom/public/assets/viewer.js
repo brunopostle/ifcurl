@@ -501,6 +501,8 @@ async function applySelector(components, model, selectorStr, srcUrl, visibility 
                                new THREE.Color(0x888888), 0.15);
     } else if (visibility === "isolate") {
       await hider.isolate(matching);
+    } else if (visibility === "clash") {
+      await applyFragmentStyle(components, matching, new THREE.Color(0xdc3232), 1);
     } else {
       // highlight (default): colour-overlay the selected elements, all others visible.
       await applyFragmentStyle(components, matching, new THREE.Color(0xff8800), 1);
@@ -536,6 +538,8 @@ async function applySelector(components, model, selectorStr, srcUrl, visibility 
                              new THREE.Color(0x888888), 0.15);
   } else if (visibility === "isolate") {
     await hider.isolate(matchingMap);
+  } else if (visibility === "clash") {
+    await applyFragmentStyle(components, matchingMap, new THREE.Color(0xdc3232), 1);
   } else {
     await applyFragmentStyle(components, matchingMap, new THREE.Color(0xff8800), 1);
   }
