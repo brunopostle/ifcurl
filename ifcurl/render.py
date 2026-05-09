@@ -69,6 +69,9 @@ except ImportError:
 # Highlight colour used in 'highlight' visibility mode (orange).
 _HIGHLIGHT_COLOR = (255, 140, 0)
 
+# Clash colour used in 'clash' visibility mode (red).
+_CLASH_COLOR = (220, 50, 50)
+
 # Diff colours: green=added, blue=modified, red=removed, grey=unchanged ghost.
 _DIFF_ADDED_COLOR = (50, 200, 50)
 _DIFF_MODIFIED_COLOR = (50, 100, 200)
@@ -160,6 +163,7 @@ def _add_shape(
       highlight — non-selected shown normally, selected shown in highlight colour
       ghost     — selected shown normally, non-selected shown as grey + translucent
       isolate   — only selected elements are added (non-selected are skipped)
+      clash     — non-selected shown normally, selected shown in clash colour (red)
 
     When *diff_ids* is provided the diff colouring takes precedence:
       green  — step ID in diff_ids["added"]
@@ -231,6 +235,11 @@ def _add_shape(
                 color, opacity = _material_color_and_opacity(mat)
             else:
                 color, opacity = (180, 180, 180), 0.10
+        elif visibility == "clash":
+            if is_selected:
+                color, opacity = _CLASH_COLOR, 1.0
+            else:
+                color, opacity = _material_color_and_opacity(mat)
         else:  # isolate — non-selected already returned above
             color, opacity = _material_color_and_opacity(mat)
 

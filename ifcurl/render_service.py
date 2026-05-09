@@ -106,6 +106,42 @@ def _sandboxed_select(ifc_bytes: bytes, selector: str) -> list[str]:
     return [e.GlobalId for e in matched if hasattr(e, "GlobalId") and e.GlobalId]
 
 
+def _sandboxed_query(ifc_bytes: bytes, selector: str, query_path: str) -> dict[str, str]:
+    """Parse model, run selector, retrieve query_path value for each element.
+
+    query_path uses dot notation: a bare name is an IFC attribute (e.g. 'Name');
+    a dotted name is 'PsetName.PropertyName' (e.g. 'Pset_WallCommon.FireRating').
+    Returns {GlobalId: str(value)} for elements that have a GlobalId and a
+    scalar value at query_path. Entity references and None values are excluded.
+    """
+    import ifcopenshell
+    import ifcopenshell.util.element
+    import ifcopenshell.util.selector
+
+    model = ifcopenshell.file.from_string(ifc_bytes.decode())
+    matched = list(ifcopenshell.util.selector.filter_elements(model, selector))
+
+    result: dict[str, str] = {}
+    if "." in query_path:
+        pset_name, prop_name = query_path.split(".", 1)
+    else:
+        pset_name, prop_name = None, query_path
+
+    for element in matched:
+        guid = getattr(element, "GlobalId", None)
+        if not guid:
+            continue
+        if pset_name is not None:
+            value = ifcopenshell.util.element.get_pset(element, pset_name, prop=prop_name)
+        else:
+            value = getattr(element, prop_name, None)
+        if value is None or hasattr(value, "id"):
+            continue
+        result[guid] = str(value)
+
+    return result
+
+
 def _sandboxed_diff(
     head_bytes: bytes,
     base_bytes: bytes,
@@ -227,6 +263,30 @@ async def select_endpoint(
         content=json.dumps({"guids": guids}),
         media_type="application/json",
     )
+
+
+@app.post("/query")
+async def query_endpoint(
+    ifc: UploadFile = File(...),
+    selector: str = Form(...),
+    query_path: str = Form(...),
+) -> Response:
+    """Retrieve a property/attribute value for each selected element.
+
+    Returns JSON ``{"<GlobalId>": "<value>", …}``.
+    """
+    ifc_bytes = await ifc.read()
+
+    try:
+        result = run_sandboxed(_sandboxed_query, ifc_bytes, selector, query_path)
+    except SandboxCrashError as exc:
+        raise HTTPException(status_code=422, detail=f"IFC parse/query crashed: {exc}") from exc
+    except SandboxTimeoutError as exc:
+        raise HTTPException(status_code=503, detail=f"Query timed out: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Query failed: {exc}") from exc
+
+    return Response(content=json.dumps(result), media_type="application/json")
 
 
 @app.post("/render_diff")
