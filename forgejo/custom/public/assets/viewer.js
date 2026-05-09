@@ -14,6 +14,12 @@ const repoInput     = document.getElementById("repo-input");
 const refInput      = document.getElementById("ref-input");
 const pathInput     = document.getElementById("path-input");
 const selectorInput = document.getElementById("selector-input");
+const queryInput    = document.getElementById("query-input");
+const queryPanel      = document.getElementById("query-panel");
+const queryTbody      = document.getElementById("query-tbody");
+const queryPanelTitle = document.getElementById("query-panel-title");
+const queryValHeader  = document.getElementById("query-val-header-col");
+const queryCloseBtn   = document.getElementById("query-close-btn");
 const copyUrlBtn       = document.getElementById("copy-url-btn");
 const newIssueBtn      = document.getElementById("new-issue-btn");
 const visibilitySelect = document.getElementById("visibility-select");
@@ -59,7 +65,8 @@ function removeSnapshot() {
 function buildIfcUrl() {
   return _buildIfcUrl(
     repoInput.value.trim(), refInput.value.trim(),
-    pathInput.value.trim(), selectorInput.value.trim()
+    pathInput.value.trim(), selectorInput.value.trim(),
+    queryInput.value.trim()
   );
 }
 
@@ -70,6 +77,7 @@ if (parsed) {
   refInput.value      = parsed.ref;
   pathInput.value     = parsed.path;
   selectorInput.value = parsed.selector;
+  queryInput.value    = parsed.query;
 }
 urlInput.value = ifcUrl;
 
@@ -175,9 +183,11 @@ function loadFromFields() {
 }
 
 // Pressing Enter in any structured field rebuilds the URL and navigates.
-for (const el of [repoInput, refInput, pathInput, selectorInput]) {
+for (const el of [repoInput, refInput, pathInput, selectorInput, queryInput]) {
   el.addEventListener("keydown", e => { if (e.key === "Enter") loadFromFields(); });
 }
+
+queryCloseBtn.addEventListener("click", () => { queryPanel.style.display = "none"; });
 
 // ▾ button: if the ref field already has a value, navigate; otherwise clear
 // + focus so the datalist shows all refs.
@@ -282,7 +292,7 @@ propsCopyBtn.addEventListener("click", async () => {
 });
 
 const allInputs = [urlInput, fovInput, repoInput, refInput, pathInput, selectorInput,
-                   visibilitySelect, bcfTitleIn, bcfCommentIn];
+                   queryInput, visibilitySelect, bcfTitleIn, bcfCommentIn];
 for (const el of allInputs) {
   el.addEventListener("focus",       onInputFocus);
   el.addEventListener("blur",        onInputBlur);
@@ -501,6 +511,8 @@ async function applySelector(components, model, selectorStr, srcUrl, visibility 
                                new THREE.Color(0x888888), 0.15);
     } else if (visibility === "isolate") {
       await hider.isolate(matching);
+    } else if (visibility === "clash") {
+      await applyFragmentStyle(components, matching, new THREE.Color(0xdc3232), 1);
     } else {
       // highlight (default): colour-overlay the selected elements, all others visible.
       await applyFragmentStyle(components, matching, new THREE.Color(0xff8800), 1);
@@ -536,9 +548,50 @@ async function applySelector(components, model, selectorStr, srcUrl, visibility 
                              new THREE.Color(0x888888), 0.15);
   } else if (visibility === "isolate") {
     await hider.isolate(matchingMap);
+  } else if (visibility === "clash") {
+    await applyFragmentStyle(components, matchingMap, new THREE.Color(0xdc3232), 1);
   } else {
     await applyFragmentStyle(components, matchingMap, new THREE.Color(0xff8800), 1);
   }
+}
+
+// -----------------------------------------------------------------------
+// Fetch /query results and display them in the query panel.
+// -----------------------------------------------------------------------
+async function applyQuery(srcUrl, queryPath) {
+  statusEl.textContent = "Querying…";
+  let data;
+  try {
+    const resp = await fetch(`/query?url=${encodeURIComponent(srcUrl)}`);
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => resp.statusText);
+      statusEl.textContent = `Query error: ${detail}`;
+      return;
+    }
+    data = await resp.json();
+  } catch (_) {
+    statusEl.textContent = "Query requires the ifcurl service — /query not reachable";
+    return;
+  }
+
+  statusEl.textContent = "";
+  const entries = Object.entries(data);
+  if (!entries.length) return;
+
+  queryPanelTitle.textContent = queryPath;
+  queryValHeader.textContent  = queryPath;
+  queryTbody.innerHTML = "";
+  for (const [guid, value] of entries) {
+    const tr = document.createElement("tr");
+    const tdGuid = document.createElement("td");
+    tdGuid.textContent = guid;
+    const tdVal = document.createElement("td");
+    tdVal.textContent = value;
+    tr.appendChild(tdGuid);
+    tr.appendChild(tdVal);
+    queryTbody.appendChild(tr);
+  }
+  queryPanel.style.display = "";
 }
 
 // -----------------------------------------------------------------------
@@ -1089,6 +1142,7 @@ async function main() {
 
     const visibility  = qsPost.get("visibility") ?? "highlight";
     const selectorStr = qsPost.get("selector") ?? "";
+    const queryStr    = qsPost.get("query") ?? "";
 
     // Set up Highlighter before selector so visibility=highlight can use it.
     let highlighter = null;
@@ -1125,6 +1179,10 @@ async function main() {
     if (selectorStr) {
       statusEl.textContent = "Applying selector…";
       await applySelector(components, model, selectorStr, ifcUrl, visibility);
+    }
+
+    if (selectorStr && queryStr) {
+      await applyQuery(ifcUrl, queryStr);
     }
 
     await fragments.core.update(true);

@@ -56,7 +56,7 @@ from ifcurl.bcf_api import router as bcf_router
 from ifcurl.documents_api import router as documents_router
 from ifcurl.git import diff_text as git_diff_text
 from ifcurl.git import fetch_ifc
-from ifcurl.render_service import _sandboxed_diff, _sandboxed_pipeline, _sandboxed_select
+from ifcurl.render_service import _sandboxed_clash, _sandboxed_diff, _sandboxed_pipeline, _sandboxed_query, _sandboxed_select
 from ifcurl.sandbox import SandboxCrashError, SandboxTimeoutError, run_sandboxed
 from ifcurl.url import IfcUrl
 
@@ -124,6 +124,42 @@ def _select_via_socket(ifc_bytes: bytes, selector: str) -> list[str]:
         raise HTTPException(status_code=503, detail=f"Render service unavailable: {exc}") from exc
     _check_render_response(resp)
     return resp.json()["guids"]
+
+
+def _clash_via_socket(ifc_bytes: bytes, selector: str) -> list[list[str]]:
+    """Delegate clash detection to the render service over the Unix socket."""
+    import httpx
+
+    try:
+        with httpx.Client(transport=httpx.HTTPTransport(uds=_RENDER_SOCKET)) as client:
+            resp = client.post(
+                "http://render/clash",
+                files={"ifc": ifc_bytes},
+                data={"selector": selector},
+                timeout=_RENDER_TIMEOUT,
+            )
+    except httpx.TransportError as exc:
+        raise HTTPException(status_code=503, detail=f"Render service unavailable: {exc}") from exc
+    _check_render_response(resp)
+    return resp.json()["pairs"]
+
+
+def _query_via_socket(ifc_bytes: bytes, selector: str, query_path: str) -> dict[str, str]:
+    """Delegate query execution to the render service over the Unix socket."""
+    import httpx
+
+    try:
+        with httpx.Client(transport=httpx.HTTPTransport(uds=_RENDER_SOCKET)) as client:
+            resp = client.post(
+                "http://render/query",
+                files={"ifc": ifc_bytes},
+                data={"selector": selector, "query_path": query_path},
+                timeout=_RENDER_TIMEOUT,
+            )
+    except httpx.TransportError as exc:
+        raise HTTPException(status_code=503, detail=f"Render service unavailable: {exc}") from exc
+    _check_render_response(resp)
+    return resp.json()
 
 
 def _diff_via_socket(
@@ -401,6 +437,16 @@ class PreviewRequest(BaseModel):
 
 
 class SelectRequest(BaseModel):
+    url: str
+    token: str | None = None
+
+
+class QueryRequest(BaseModel):
+    url: str
+    token: str | None = None
+
+
+class ClashRequest(BaseModel):
     url: str
     token: str | None = None
 
@@ -707,6 +753,152 @@ def select(request: SelectRequest) -> JSONResponse:
 
     _t3_put(hexsha, ifc_url.path, ifc_url.selector, frozenset(guids))
     return JSONResponse({"guids": guids})
+
+
+@app.get("/query")
+def query_get(url: str, token: str | None = None) -> JSONResponse:
+    """GET variant of POST /query."""
+    return query(QueryRequest(url=url, token=token))
+
+
+@app.post("/query")
+def query(request: QueryRequest) -> JSONResponse:
+    """Retrieve a property or attribute value for each element matched by the selector.
+
+    The URL must contain both ``selector=`` and ``query=`` parameters.  The
+    ``query`` value uses dot notation: a bare name is an IFC attribute
+    (e.g. ``Name``); a dotted name addresses a property set
+    (e.g. ``Pset_WallCommon.FireRating``).
+
+    Returns ``{"<GlobalId>": "<value>", …}`` JSON.  Elements with no GlobalId
+    or whose query path resolves to an entity reference are excluded.
+    Results are not cached at Tier 4 — the response depends on the query path
+    as well as the URL, making a shared cache key impractical.
+    """
+    try:
+        ifc_url = IfcUrl.parse(request.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if ifc_url.path is None:
+        raise HTTPException(status_code=400, detail="URL has no 'path' parameter")
+    if not ifc_url.selector:
+        raise HTTPException(status_code=400, detail="URL has no 'selector' parameter")
+    if not ifc_url.query:
+        raise HTTPException(status_code=400, detail="URL has no 'query' parameter")
+
+    query_path = ifc_url.query
+    if "." not in query_path and (
+        query_path.startswith("Pset_") or query_path.startswith("Qto_")
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'query={query_path}' looks like a property set name — "
+                f"use dot notation: '{query_path}.PropertyName'"
+            ),
+        )
+
+    _ssrf_check(ifc_url)
+
+    token = request.token
+    if token is None and ifc_url.host:
+        token = get_token_for_host(ifc_url.host)
+
+    try:
+        hexsha, ifc_bytes, _ = fetch_ifc(ifc_url, token=token)
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    _check_ifc_size(ifc_bytes)
+
+    cached_bytes = _t2_get(hexsha, ifc_url.path)
+    ifc_bytes = cached_bytes if cached_bytes is not None else ifc_bytes
+    if cached_bytes is None:
+        _t2_put(hexsha, ifc_url.path, ifc_bytes)
+
+    try:
+        if _RENDER_SOCKET:
+            result = _query_via_socket(ifc_bytes, ifc_url.selector, ifc_url.query)
+        else:
+            result = run_sandboxed(_sandboxed_query, ifc_bytes, ifc_url.selector, ifc_url.query)
+    except SandboxCrashError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"IFC parse/query crashed: {exc}"
+        ) from exc
+    except SandboxTimeoutError as exc:
+        raise HTTPException(status_code=503, detail=f"Query timed out: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Query failed: {exc}") from exc
+
+    return JSONResponse(result)
+
+
+@app.get("/clash")
+def clash_get(url: str, token: str | None = None) -> JSONResponse:
+    """GET variant of POST /clash."""
+    return clash(ClashRequest(url=url, token=token))
+
+
+@app.post("/clash")
+def clash(request: ClashRequest) -> JSONResponse:
+    """Detect geometric clashes within the elements matched by the selector.
+
+    The URL's ``selector=`` parameter defines the set of elements to test
+    against each other.  Uses ifcopenshell hard-clash (interpenetration)
+    detection.  Returns ``{"pairs": [["<guidA>", "<guidB>"], …]}``.
+    """
+    try:
+        ifc_url = IfcUrl.parse(request.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if ifc_url.path is None:
+        raise HTTPException(status_code=400, detail="URL has no 'path' parameter")
+    if not ifc_url.selector:
+        raise HTTPException(status_code=400, detail="URL has no 'selector' parameter")
+
+    _ssrf_check(ifc_url)
+
+    token = request.token
+    if token is None and ifc_url.host:
+        token = get_token_for_host(ifc_url.host)
+
+    try:
+        hexsha, ifc_bytes, _ = fetch_ifc(ifc_url, token=token)
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    _check_ifc_size(ifc_bytes)
+
+    cached_bytes = _t2_get(hexsha, ifc_url.path)
+    ifc_bytes = cached_bytes if cached_bytes is not None else ifc_bytes
+    if cached_bytes is None:
+        _t2_put(hexsha, ifc_url.path, ifc_bytes)
+
+    try:
+        if _RENDER_SOCKET:
+            pairs = _clash_via_socket(ifc_bytes, ifc_url.selector)
+        else:
+            pairs = run_sandboxed(_sandboxed_clash, ifc_bytes, ifc_url.selector)
+    except SandboxCrashError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"IFC clash detection crashed: {exc}"
+        ) from exc
+    except SandboxTimeoutError as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Clash detection timed out: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422, detail=f"Clash detection failed: {exc}"
+        ) from exc
+
+    return JSONResponse({"pairs": pairs})
 
 
 @app.get("/foundation/versions")
