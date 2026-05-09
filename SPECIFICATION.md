@@ -96,6 +96,35 @@ selector=325Q7Fhnf67OZC$$r43uzK
 
 When omitted, no selection is applied.
 
+### `query`
+
+A single attribute or property path to retrieve from the selected elements,
+using dot notation to address property sets.
+
+```
+query=Name
+query=Description
+query=Pset_WallCommon.FireRating
+query=Qto_WallBaseQuantities.NetVolume
+```
+
+The response is a JSON object whose keys are the GlobalId of each matching
+element and whose values are the retrieved attribute or property value:
+
+```json
+{"325Q7Fhnf67OZC$$r43uzK": "2HR", "0t2oN7…": "1HR"}
+```
+
+Only elements that have a GlobalId are included in the response. Elements
+matched by the selector that lack a GlobalId are silently excluded. Attributes
+that resolve to an IFC entity reference rather than a scalar value are
+undefined and excluded.
+
+`query` may be combined with view parameters (`camera`, `fov`, `scale`,
+`clip`, `visibility`). A viewer receiving both should display the 3D view and
+the queried property values together. A render service producing a static image
+ignores `query`.
+
 ### `camera`
 
 Nine comma-separated decimal values defining the camera in IFC world
@@ -188,8 +217,15 @@ Controls how selected and unselected elements are displayed.
 | `highlight` | Show all elements, highlight selection (default) |
 | `ghost` | Show selection normally, dim all other elements |
 | `isolate` | Show only selected elements, hide all others |
+| `clash` | Show all elements, mark selection with clash-indicator styling (e.g. red) |
 
 When omitted, `highlight` is assumed.
+
+`clash` is a visual cue only. It carries no semantic claim about the nature of
+the issue; it signals to the viewer that the selected elements should be
+rendered in a manner that visually distinguishes a reported clash. When
+exported to BCF, `clash` is treated as `highlight` — BCF has no equivalent
+structural distinction.
 
 ---
 
@@ -272,15 +308,21 @@ A compliant viewer must:
 - Apply perspective camera (`camera` + `fov`)
 - Apply orthographic camera (`camera` + `scale`)
 - Apply clipping planes (`clip`)
-- Apply visibility mode (`highlight`, `ghost`, `isolate`)
+- Apply visibility mode (`highlight`, `ghost`, `isolate`, `clash`)
 - Resolve relative `IFCDOCUMENTREFERENCE` paths using the root file's repo
   and ref context
 - Resolve `ifc://` `IFCDOCUMENTREFERENCE` locations
 
+When `query` is present, a compliant viewer should retrieve the specified
+attribute or property value for each selected element and display the results
+alongside the 3D view. If view parameters are also present, both the 3D view
+and the property values are shown. A render service producing a static image
+may ignore `query`.
+
 Optional extensions:
 
 - Semantic colouring
-- Advanced visual styles beyond the three visibility modes
+- Advanced visual styles beyond the four visibility modes
 
 ---
 
@@ -320,6 +362,24 @@ OpenCDE document, current version, no view parameters (opens at default view):
 
 ```
 ifc://cde.example.com/project-123?document_id=bf546064-6b97-4730-a094-c21ab929c91a
+```
+
+Query the fire rating of all walls — returns `{"<guid>": "<value>", …}`:
+
+```
+ifc://example.com/org/project@heads/main?path=models/building.ifc&selector=IfcWall&query=Pset_WallCommon.FireRating
+```
+
+Query with a camera view — viewer shows 3D view and property table together:
+
+```
+ifc://example.com/org/project@heads/main?path=models/building.ifc&selector=IfcWall,+Name="Core+Wall"&camera=10,20,5,0,-1,0,0,0,1&fov=60&query=Name
+```
+
+Clash indicator — selected elements rendered with clash styling:
+
+```
+ifc://example.com/org/project@heads/main?path=models/building.ifc&selector=IfcWall,+Name="Core+Wall"+IfcBeam,+Name="B1"&visibility=clash
 ```
 
 ---
