@@ -41,13 +41,14 @@ class IfcUrl:
     ref: str  # e.g. 'heads/main', 'tags/v1.2', 'abc123def', 'HEAD'
     path: str | None  # IFC file path within the repository
     selector: str | None  # IfcOpenShell selector expression (percent-decoded)
+    query: str | None  # dot-notation attribute/property path, e.g. 'Pset_WallCommon.FireRating'
     camera: tuple[float, float, float, float, float, float, float, float, float] | None
     fov: float | None  # perspective field of view in degrees
     scale: float | None  # orthographic view-to-world scale (BCF ViewToWorldScale)
     clips: list[tuple[float, float, float, float, float, float]] = field(
         default_factory=list
     )
-    visibility: str = "highlight"  # 'highlight', 'ghost', or 'isolate'
+    visibility: str = "highlight"  # 'highlight', 'ghost', 'isolate', or 'clash'
 
     @classmethod
     def parse(cls, url_string: str) -> IfcUrl:
@@ -95,6 +96,7 @@ class IfcUrl:
 
         path = qs["path"][0] if "path" in qs else None
         selector = unquote(qs["selector"][0]) if "selector" in qs else None
+        query = qs["query"][0] if "query" in qs else None
 
         camera: tuple[float, ...] | None = None
         if "camera" in qs:
@@ -150,9 +152,9 @@ class IfcUrl:
             clips.append(tuple(vals))  # type: ignore[arg-type]
 
         visibility_raw = qs.get("visibility", ["highlight"])[0]
-        if visibility_raw not in ("highlight", "ghost", "isolate"):
+        if visibility_raw not in ("highlight", "ghost", "isolate", "clash"):
             raise ValueError(
-                f"Unknown visibility mode {visibility_raw!r}; expected 'highlight', 'ghost', or 'isolate'"
+                f"Unknown visibility mode {visibility_raw!r}; expected 'highlight', 'ghost', 'isolate', or 'clash'"
             )
 
         return cls(
@@ -163,6 +165,7 @@ class IfcUrl:
             ref=ref,
             path=path,
             selector=selector,
+            query=query,
             camera=camera,  # type: ignore[arg-type]
             fov=fov,
             scale=scale,
@@ -227,6 +230,8 @@ class IfcUrl:
             parts.append(f"path={quote(self.path, safe='/')}")
         if self.selector:
             parts.append(f"selector={quote(self.selector, safe='$')}")
+        if self.query:
+            parts.append(f"query={self.query}")
         if self.camera:
             vals = ",".join(repr(v) for v in self.camera)
             parts.append(f"camera={vals}")
