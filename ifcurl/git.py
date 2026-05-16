@@ -83,29 +83,15 @@ def fetch_ifc(ifc_url: IfcUrl, token: str | None = None) -> tuple[str, bytes, bo
     repo, is_stale = _get_repo(ifc_url, token=token)
     try:
         hexsha, data = _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
-    except ValueError as exc:
+    except (ValueError, git.exc.BadObject, git.exc.BadName) as exc:
         # For immutable refs (commit hashes) the initial clone only fetches the
         # default branch.  PR-branch commits won't be present until we fetch all
-        # refs.  Retry once after a full fetch.
-        if (
-            "not found in repository" in str(exc)
-            and ifc_url.transport != "local"
-            and not ifc_url.is_mutable_ref()
-        ):
-            remote_url = ifc_url.git_remote_url()
-            auth = _auth_url(remote_url, token)
-            try:
-                if auth != remote_url:
-                    repo.git.fetch(auth, "+refs/*:refs/*")
-                else:
-                    repo.git.fetch("origin", "+refs/*:refs/*")
-            except git.exc.GitCommandError:
-                fallback = _http_fallback(auth)
-                if fallback:
-                    try:
-                        repo.git.fetch(fallback, "+refs/*:refs/*")
-                    except git.exc.GitCommandError:
-                        pass
+        # refs.  Retry once after a full fetch.  We catch git exceptions directly
+        # here because BadObject may be a subclass of ValueError in some GitPython
+        # versions, causing the raw git error message to bypass _read_commit_blob's
+        # wrapping and making string-based message checks unreliable.
+        if ifc_url.transport != "local" and not ifc_url.is_mutable_ref():
+            _fetch_all_refs(repo, ifc_url.git_remote_url(), token)
             hexsha, data = _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
         else:
             raise
@@ -139,6 +125,12 @@ def diff_text(base_url: IfcUrl, head_url: IfcUrl, token: str | None = None) -> s
         )
 
     repo, _ = _get_repo(base_url, token=token)
+    for ifc_url in (base_url, head_url):
+        try:
+            repo.commit(ifc_url.git_ref())
+        except (git.exc.BadName, git.exc.BadObject, ValueError):
+            if ifc_url.transport != "local" and not ifc_url.is_mutable_ref():
+                _fetch_all_refs(repo, ifc_url.git_remote_url(), token)
     try:
         base_hexsha = repo.commit(base_url.git_ref()).hexsha
         head_hexsha = repo.commit(head_url.git_ref()).hexsha
@@ -167,6 +159,23 @@ def fetch_ifc_bytes(ifc_url: IfcUrl, token: str | None = None) -> bytes:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _fetch_all_refs(repo: "git.Repo", remote_url: str, token: str | None) -> None:
+    """Fetch all refs from *remote_url* into *repo*, with http fallback."""
+    auth = _auth_url(remote_url, token)
+    try:
+        if auth != remote_url:
+            repo.git.fetch(auth, "+refs/*:refs/*")
+        else:
+            repo.git.fetch("origin", "+refs/*:refs/*")
+    except git.exc.GitCommandError:
+        fallback = _http_fallback(auth)
+        if fallback:
+            try:
+                repo.git.fetch(fallback, "+refs/*:refs/*")
+            except git.exc.GitCommandError:
+                pass
 
 
 def _get_repo(ifc_url: IfcUrl, token: str | None = None) -> tuple[git.Repo, bool]:

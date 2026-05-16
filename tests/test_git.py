@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
@@ -105,6 +106,187 @@ class TestInvalidRepo:
         url = IfcUrl.parse(f"ifc://{tmp_path}@HEAD?path=model.ifc")
         with pytest.raises(ValueError):
             fetch_ifc(url)
+
+
+# ---------------------------------------------------------------------------
+# Fetch-on-miss retry (PR / non-default-branch commits)
+# ---------------------------------------------------------------------------
+
+
+def _make_remote_with_branch_after_clone(tmp_path: Path, ifc_bytes: bytes, cache_dest: Path) -> dict:
+    """Create a remote repo, bare-clone it, then add a branch commit to the remote.
+
+    This simulates the real scenario: initial bare clone only has the default branch,
+    then a PR is created (new commit appears in remote) that the clone doesn't know about.
+    Returns metadata about both commits and the pre-populated bare cache.
+    """
+    import git as gitpkg
+
+    remote = tmp_path / "remote"
+    remote.mkdir()
+    r = gitpkg.Repo.init(str(remote))
+    with r.config_writer() as cw:
+        cw.set_value("user", "name", "Test")
+        cw.set_value("user", "email", "test@example.com")
+
+    (remote / "model.ifc").write_bytes(ifc_bytes)
+    r.index.add(["model.ifc"])
+    main_commit = r.index.commit("main commit")
+
+    # Clone while only the main commit exists
+    cache = gitpkg.Repo.clone_from(str(remote), str(cache_dest), bare=True)
+
+    # Now add a branch commit to the remote (simulates a PR being opened)
+    r.create_head("pr-branch").checkout()
+    modified = ifc_bytes + b"\n/* branch */"
+    (remote / "model.ifc").write_bytes(modified)
+    r.index.add(["model.ifc"])
+    branch_commit = r.index.commit("pr commit")
+    r.heads[r.active_branch.name].checkout()  # back to default
+
+    return {
+        "remote_path": str(remote),
+        "cache": cache,
+        "main_hexsha": main_commit.hexsha,
+        "branch_hexsha": branch_commit.hexsha,
+        "branch_bytes": modified,
+    }
+
+
+class TestFetchAllRefs:
+    def test_fetches_non_default_branch_commit(self, tmp_path, local_ifc_repo):
+        from ifcurl.git import _fetch_all_refs
+
+        meta = _make_remote_with_branch_after_clone(
+            tmp_path, local_ifc_repo["bytes"], tmp_path / "cache.git"
+        )
+
+        with pytest.raises(Exception):  # commit absent before fetch
+            meta["cache"].commit(meta["branch_hexsha"])
+
+        _fetch_all_refs(meta["cache"], meta["remote_path"], token=None)
+
+        found = meta["cache"].commit(meta["branch_hexsha"])
+        assert found.hexsha == meta["branch_hexsha"]
+
+    def test_main_commit_still_accessible_after_fetch(self, tmp_path, local_ifc_repo):
+        from ifcurl.git import _fetch_all_refs
+
+        meta = _make_remote_with_branch_after_clone(
+            tmp_path, local_ifc_repo["bytes"], tmp_path / "cache.git"
+        )
+        _fetch_all_refs(meta["cache"], meta["remote_path"], token=None)
+
+        found = meta["cache"].commit(meta["main_hexsha"])
+        assert found.hexsha == meta["main_hexsha"]
+
+    def test_noop_when_fetch_fails(self, tmp_path, local_ifc_repo):
+        from ifcurl.git import _fetch_all_refs
+
+        meta = _make_remote_with_branch_after_clone(
+            tmp_path, local_ifc_repo["bytes"], tmp_path / "cache.git"
+        )
+        # Bad remote URL — should silently fail without raising
+        _fetch_all_refs(meta["cache"], "file:///nonexistent/repo.git", token=None)
+
+
+class TestFetchIfcRetry:
+    def _patch_url_as_remote(self, url, meta, monkeypatch):
+        """Patch a local IfcUrl instance to look like a remote immutable ref."""
+        import ifcurl.url as url_mod
+        url.transport = "https"
+        monkeypatch.setattr(url_mod.IfcUrl, "is_mutable_ref", lambda self: False)
+        monkeypatch.setattr(url_mod.IfcUrl, "git_ref", lambda self: meta["branch_hexsha"])
+        monkeypatch.setattr(url_mod.IfcUrl, "git_remote_url", lambda self: meta["remote_path"])
+
+    def test_no_retry_for_local_transport(self, local_ifc_repo, monkeypatch):
+        """For local transport, BadObject should propagate without triggering retry."""
+        import git.exc
+        import ifcurl.git as gmod
+
+        fetch_calls = []
+        monkeypatch.setattr(gmod, "_fetch_all_refs", lambda *a: fetch_calls.append(1))
+
+        monkeypatch.setattr(
+            gmod,
+            "_read_commit_blob",
+            lambda repo, git_ref, fp: (_ for _ in ()).throw(
+                git.exc.BadObject(git_ref.encode(), b"missing")
+            ),
+        )
+
+        url = IfcUrl.parse(
+            f"ifc://{local_ifc_repo['path']}@{local_ifc_repo['hexsha']}?path=model.ifc"
+        )
+        with pytest.raises((ValueError, git.exc.BadObject)):
+            fetch_ifc(url)
+
+        assert fetch_calls == [], "retry must not fire for local transport"
+
+    def test_retry_fires_for_remote_immutable_ref(self, tmp_path, local_ifc_repo, monkeypatch):
+        """fetch_ifc calls _fetch_all_refs then retries when commit is absent from clone."""
+        import ifcurl.git as gmod
+
+        meta = _make_remote_with_branch_after_clone(
+            tmp_path, local_ifc_repo["bytes"], tmp_path / "cache.git"
+        )
+
+        real_fetch_all = gmod._fetch_all_refs
+        fetch_calls = []
+
+        def recording_fetch_all(repo, remote_url, token):
+            fetch_calls.append(remote_url)
+            real_fetch_all(repo, meta["remote_path"], token)
+
+        monkeypatch.setattr(gmod, "_get_repo", lambda ifc_url, token=None: (meta["cache"], False))
+        monkeypatch.setattr(gmod, "_fetch_all_refs", recording_fetch_all)
+
+        url = IfcUrl.parse(f"ifc:///ignored@{meta['branch_hexsha']}?path=model.ifc")
+        self._patch_url_as_remote(url, meta, monkeypatch)
+
+        hexsha, data, _ = fetch_ifc(url)
+
+        assert hexsha == meta["branch_hexsha"]
+        assert data == meta["branch_bytes"]
+        assert len(fetch_calls) == 1
+
+    def test_bad_object_exception_triggers_retry(self, tmp_path, local_ifc_repo, monkeypatch):
+        """BadObject (even if a ValueError subclass) triggers the retry, not just ValueError."""
+        import git.exc
+        import ifcurl.git as gmod
+
+        meta = _make_remote_with_branch_after_clone(
+            tmp_path, local_ifc_repo["bytes"], tmp_path / "cache.git"
+        )
+
+        orig_read = gmod._read_commit_blob
+        real_fetch_all = gmod._fetch_all_refs
+        call_count = [0]
+
+        def flaky_read(repo, git_ref, file_path):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise git.exc.BadObject(git_ref.encode(), b"missing")
+            return orig_read(repo, git_ref, file_path)
+
+        fetch_calls = []
+
+        def recording_fetch_all(repo, remote_url, token):
+            fetch_calls.append(remote_url)
+            real_fetch_all(repo, meta["remote_path"], token)
+
+        monkeypatch.setattr(gmod, "_read_commit_blob", flaky_read)
+        monkeypatch.setattr(gmod, "_fetch_all_refs", recording_fetch_all)
+        monkeypatch.setattr(gmod, "_get_repo", lambda ifc_url, token=None: (meta["cache"], False))
+
+        url = IfcUrl.parse(f"ifc:///ignored@{meta['branch_hexsha']}?path=model.ifc")
+        self._patch_url_as_remote(url, meta, monkeypatch)
+
+        hexsha, data, _ = fetch_ifc(url)
+
+        assert hexsha == meta["branch_hexsha"]
+        assert call_count[0] == 2    # first raises BadObject, second succeeds
+        assert len(fetch_calls) == 1  # _fetch_all_refs called once between the two
 
 
 # ---------------------------------------------------------------------------
