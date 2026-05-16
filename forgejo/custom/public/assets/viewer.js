@@ -1082,6 +1082,9 @@ async function main() {
   await ifcLoader.setup({
     autoSetWasm: false,
     wasm: { path: "/assets/", absolute: true },
+    // Keep geometry in IFC world coords so camera= URL params (which are
+    // in IFC world coords per spec) match without a COORDINATE_TO_ORIGIN shift.
+    webIfc: { COORDINATE_TO_ORIGIN: false },
   });
 
   statusEl.textContent = "Fetching IFC file…";
