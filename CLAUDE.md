@@ -68,6 +68,74 @@ Tier 4: full URL hash → rendered PNG (**never** applied to mutable refs like `
 - BCF ↔ IFC URL conversion is defined in `SPECIFICATION.md` §6.
 
 
+## Phase 3 — Forgejo/JS deployment
+
+### Deployed components
+
+| File | Location |
+|---|---|
+| `forgejo/templates/custom/footer.tmpl` | `/var/lib/forgejo/custom/templates/custom/footer.tmpl` |
+| `forgejo/custom/public/assets/*` | `/var/lib/forgejo/custom/public/assets/` |
+
+No Forgejo restart needed for template or static asset changes.
+
+### Deploy command
+
+```bash
+sudo cp forgejo/templates/custom/footer.tmpl /var/lib/forgejo/custom/templates/custom/footer.tmpl
+sudo cp forgejo/custom/public/assets/* /var/lib/forgejo/custom/public/assets/
+```
+
+### Services
+
+- `ifcurl-api.service` — preview/select/query/BCF/render_diff service on port 8000
+- Forgejo on `http://localhost:3000`
+- Python install: `/opt/ifcurl/lib/python3.14/site-packages/ifcurl/`
+
+### Browser test checklist
+
+Before testing, confirm assets are deployed and services are up:
+```bash
+curl -s http://localhost:3000/assets/ifcurl.js | head -1   # should print JS comment
+systemctl is-active ifcurl-api.service forgejo
+```
+
+**1 — ifcurl.js loads.** Open devtools console on any Forgejo page; no JS errors. Fetch `http://localhost:3000/assets/ifcurl.js` directly — must return JS, not 404.
+
+**2 — "View in 3D" button (file view).** Open an `.ifc` file in Forgejo. Expect a "View in 3D" button in the top-right file header button group. Link must point to `/assets/viewer.html?url=ifc://localhost:3000/...@<40-char-hash>?path=...`.
+
+**3 — "3D" links (file history).** Go to the file history page. Each commit row should have a small "3D" link after the browse-file link.
+
+**4 — Viewer loads and renders.** Click "View in 3D". Viewer should show "Fetching IFC file…" → "Parsing IFC…" → blank status → 3D model in canvas.
+
+**5 — Camera syncs to URL.** Orbit the camera. The URL bar updates with `camera=x,y,z,...`. Copy URL, open new tab — camera restores.
+
+**6 — Ref datalist.** Clear the ref field in the toolbar; datalist should populate with `heads/main` etc. Select one and press Enter — model reloads.
+
+**7 — Commit-pin badge.** Opened from "View in 3D" (hash URL): toolbar shows short hash badge and `→ heads/main` switch button.
+
+**8 — Simple type selector.** Set selector to `IfcWall`, press Enter. Walls highlight orange. Visibility dropdown appears. Test `ghost` and `isolate` modes.
+
+**9 — Complex selector (requires ifcurl-api).** Set selector to `IfcWall, Name="..."`. Status shows "Resolving selector…" then applies highlighting. If service unreachable, error appears in status bar (not silent).
+
+**10 — Markdown ifc:// link preview.** Post an issue containing `[label](ifc://localhost:3000/org/repo@heads/main?path=file.ifc)`. Rendered markdown should replace the link with a `<figure>` containing a preview image and URL caption.
+
+**11 — PR diff view.** Open a PR modifying an `.ifc` file. The `/pulls/<N>/files` page should inject a render-diff image below each `.ifc` file header (fetched from `/render_diff?base=...&head=...`).
+
+**12 — Commit diff view.** Open a commit that modifies an `.ifc` file. Same render-diff image below the file header. Added-only file → plain preview; deleted-only → preview of old version.
+
+**13 — BCF export (no selector).** Orient camera, click BCF button, export. Download `view.bcf`. Check zip contains `<guid>/viewpoint.bcfv` with `<PerspectiveCamera>` and `snapshot.png`.
+
+**14 — BCF round-trip.** Drag the exported `.bcf` back into the viewer. Camera restores to exported viewpoint.
+
+**15 — Copy URL button.** Click copy. Paste into address bar — valid `ifc://` URL with current camera state.
+
+**16 — New Issue button.** Click "New Issue" in viewer. Opens Forgejo new-issue form in new tab with ifc:// URL pre-filled in body.
+
+**17 — Metadata panel.** Click the hamburger (☰) button. Shows storey list; clicking a storey isolates its elements. (Type counts are not currently shown — see ifcurl-hwk.)
+
+**18 — Click-to-inspect.** Click a 3D element. Properties panel shows IFC type, name, GlobalId. Copy button copies GUID.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 
