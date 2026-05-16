@@ -81,7 +81,34 @@ def fetch_ifc(ifc_url: IfcUrl, token: str | None = None) -> tuple[str, bytes, bo
         raise ValueError("URL has no 'path' parameter — cannot fetch IFC file")
 
     repo, is_stale = _get_repo(ifc_url, token=token)
-    hexsha, data = _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
+    try:
+        hexsha, data = _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
+    except ValueError as exc:
+        # For immutable refs (commit hashes) the initial clone only fetches the
+        # default branch.  PR-branch commits won't be present until we fetch all
+        # refs.  Retry once after a full fetch.
+        if (
+            "not found in repository" in str(exc)
+            and ifc_url.transport != "local"
+            and not ifc_url.is_mutable_ref()
+        ):
+            remote_url = ifc_url.git_remote_url()
+            auth = _auth_url(remote_url, token)
+            try:
+                if auth != remote_url:
+                    repo.git.fetch(auth, "+refs/*:refs/*")
+                else:
+                    repo.git.fetch("origin", "+refs/*:refs/*")
+            except git.exc.GitCommandError:
+                fallback = _http_fallback(auth)
+                if fallback:
+                    try:
+                        repo.git.fetch(fallback, "+refs/*:refs/*")
+                    except git.exc.GitCommandError:
+                        pass
+            hexsha, data = _read_commit_blob(repo, ifc_url.git_ref(), ifc_url.path)
+        else:
+            raise
     return hexsha, data, is_stale
 
 

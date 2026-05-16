@@ -65,24 +65,6 @@ function init() {
   replaceIfcAnchors();
 
   // -----------------------------------------------------------------------
-  // Case 1: single file view — permalink button in .file-header-right.
-  // -----------------------------------------------------------------------
-  const btnGroup = document.querySelector(".file-header-right .ui.buttons");
-  if (btnGroup) {
-    // If already at a commit URL use the pathname directly; otherwise find
-    // the Permalink anchor (present on branch/tag file views).
-    let info = parseCommitHref(window.location.pathname);
-    if (!info) {
-      const a = document.querySelector('a[href*="/src/commit/"]');
-      if (a) info = parseCommitHref(a.getAttribute("href"));
-    }
-    if (info && info.treePath.toLowerCase().endsWith(".ifc")) {
-      btnGroup.appendChild(makeViewerLink(info, "View in 3D"));
-    }
-    return;
-  }
-
-  // -----------------------------------------------------------------------
   // Case 3: PR diff page — inject a render_diff image below the header of
   // each .ifc file in the diff.  Requires Nginx to proxy /render_diff to
   // the ifcurl preview service (see forgejo/README.md).
@@ -208,6 +190,26 @@ function init() {
       const header = box.querySelector(".diff-file-header");
       if (header) header.insertAdjacentElement("afterend", container);
     });
+    return;
+  }
+
+  // -----------------------------------------------------------------------
+  // Case 1: single file view — permalink button in .file-header-right.
+  // Must come after URL-pattern cases (Cases 3 and 4) because Forgejo's
+  // PR diff and commit pages also contain .file-header-right .ui.buttons.
+  // -----------------------------------------------------------------------
+  const btnGroup = document.querySelector(".file-header-right .ui.buttons");
+  if (btnGroup) {
+    // If already at a commit URL use the pathname directly; otherwise find
+    // the Permalink anchor (present on branch/tag file views).
+    let info = parseCommitHref(window.location.pathname);
+    if (!info) {
+      const a = document.querySelector('a[href*="/src/commit/"]');
+      if (a) info = parseCommitHref(a.getAttribute("href"));
+    }
+    if (info && info.treePath.toLowerCase().endsWith(".ifc")) {
+      btnGroup.appendChild(makeViewerLink(info, "View in 3D"));
+    }
     return;
   }
 
