@@ -910,8 +910,9 @@ async function populateMetaPanel(components) {
   const types = [];
   if (categories) {
     for (const [name, groupData] of categories) {
+      const fragmentMap = await groupData.get();
       let count = 0;
-      for (const ids of Object.values(groupData.map)) { if (ids) count += ids.length; }
+      for (const ids of Object.values(fragmentMap)) { if (ids) count += ids.size; }
       if (count > 0) types.push({ name, count });
     }
     types.sort((a, b) => b.count - a.count);

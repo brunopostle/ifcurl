@@ -132,7 +132,7 @@ systemctl is-active ifcurl-api.service forgejo
 
 **16 — New Issue button.** Click "New Issue" in viewer. Opens Forgejo new-issue form in new tab with ifc:// URL pre-filled in body.
 
-**17 — Metadata panel.** Click the hamburger (☰) button. Shows storey list; clicking a storey isolates its elements. (Type counts are not currently shown — see ifcurl-hwk.)
+**17 — Metadata panel.** Click the hamburger (☰) button. Shows type counts (IfcWall: N, IfcSlab: N, …) and storey list; clicking a storey isolates its elements.
 
 **18 — Click-to-inspect.** Click a 3D element. Properties panel shows IFC type, name, GlobalId. Copy button copies GUID.
 
