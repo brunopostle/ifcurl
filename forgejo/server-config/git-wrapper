@@ -1,0 +1,60 @@
+#!/bin/bash
+# Drop this at /usr/bin/git (move original to /usr/bin/git.real).
+#
+# Forgejo checks PR mergeability by calling 'git merge-file current base other'
+# directly. This bypasses gitattributes merge drivers entirely — there is no
+# way to configure ifcmerge via /etc/gitconfig for this code path.
+#
+# This wrapper intercepts 'git merge-file' calls where the file being merged
+# is an IFC/STEP file (identified by the ISO-10303 header) and delegates to
+# ifcmerge instead of git's built-in text merge.
+#
+# Installation:
+#   mv /usr/bin/git /usr/bin/git.real
+#   cp git-wrapper /usr/bin/git
+#   chmod +x /usr/bin/git
+#
+# The wrapper is transparent for all other git commands.
+#
+# NOTE: apt upgrades to the git package will overwrite /usr/bin/git.
+# After any git package upgrade, reinstall this wrapper.
+
+is_merge_file=false
+for arg in "$@"; do
+    [ "$arg" = "merge-file" ] && is_merge_file=true && break
+done
+
+if $is_merge_file; then
+    files=()
+    past_subcommand=false
+    skip_next=false
+    for arg in "$@"; do
+        if ! $past_subcommand; then
+            [ "$arg" = "merge-file" ] && past_subcommand=true
+            continue
+        fi
+        if $skip_next; then skip_next=false; continue; fi
+        case "$arg" in
+            -L|--marker-size) skip_next=true ;;
+            -p|-q|--quiet|--ours|--theirs|--union|--diff3|--zdiff3) ;;
+            --) ;;
+            -*) ;;
+            *) files+=("$arg") ;;
+        esac
+    done
+
+    if [ ${#files[@]} -eq 3 ]; then
+        current="${files[0]}"
+        base="${files[1]}"
+        other="${files[2]}"
+        if [ -f "$current" ] && head -c 20 "$current" 2>/dev/null | grep -q "ISO-10303"; then
+            dir=$(dirname "$current")
+            [[ "$base" != /* ]] && base="$dir/$base"
+            [[ "$other" != /* ]] && other="$dir/$other"
+            ifcmerge --prioritise-local "$base" "$current" "$other" "$current"
+            exit $?
+        fi
+    fi
+fi
+
+exec /usr/bin/git.real "$@"

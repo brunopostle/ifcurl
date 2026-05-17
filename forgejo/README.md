@@ -268,21 +268,32 @@ automatically merge IFC pull requests instead of marking them as conflicted.
 
 ### How Forgejo checks mergeability
 
-Forgejo (with git ≥ 2.38) uses `git merge-tree --write-tree` to perform a
-trial merge in the bare repository.  This command **does** invoke configured
-merge drivers — confirmed by testing.  With ifcmerge set up correctly,
-the "can be automatically merged" indicator on a PR reflects ifcmerge's
-actual result, not a naive text-conflict check.
+Forgejo checks PR mergeability by calling `git merge-file current base other`
+directly for each conflicting file.  This command bypasses gitattributes merge
+drivers entirely — `/etc/gitconfig` and `core.attributesFile` have no effect
+on this code path.
 
-**Important:** bare repositories do not read committed `.gitattributes` files
-from the tree.  The merge driver must be declared via a system-wide
-`core.attributesFile` setting in `/etc/gitconfig`.
+The solution is a **git wrapper** at `/usr/bin/git` (with the original binary
+moved to `/usr/bin/git.real`) that intercepts `merge-file` calls, detects IFC
+files by their ISO-10303 STEP header, and delegates to `ifcmerge` instead.
+
+The `/etc/gitconfig` merge driver registration and `/etc/gitattributes` are
+still useful for client-side `git merge` operations on developer machines, but
+they do not affect Forgejo's server-side conflict check.
+
+**Important:** the git package in apt will overwrite `/usr/bin/git` on upgrade.
+Reinstall the wrapper (`server-config/git-wrapper`) after any git package upgrade.
 
 ### Prerequisites
 
-`ifcmerge` is a single Perl script from
-[github.com/brunopostle/ifcmerge](https://github.com/brunopostle/ifcmerge).
-Download and install it on the Forgejo server:
+`ifcmerge` is a Perl script — install Perl's DateTime module first:
+
+```bash
+apt install -y libdatetime-perl
+```
+
+Then download ifcmerge from
+[github.com/brunopostle/ifcmerge](https://github.com/brunopostle/ifcmerge):
 
 ```bash
 curl -o /usr/local/bin/ifcmerge \
@@ -290,19 +301,24 @@ curl -o /usr/local/bin/ifcmerge \
 chmod +x /usr/local/bin/ifcmerge
 ```
 
-Verify it is on `PATH` for the `forgejo` system user:
+### Install the git wrapper
+
+The git wrapper intercepts `git merge-file` for IFC files and routes them to
+ifcmerge.  Install it by replacing the git binary:
 
 ```bash
-sudo -u forgejo which ifcmerge
+mv /usr/bin/git /usr/bin/git.real
+cp forgejo/server-config/git-wrapper /usr/bin/git
+chmod +x /usr/bin/git
 ```
 
-### Deploy the config files
+### Deploy the config files (for client-side merges)
 
 ```bash
-# System-wide gitattributes (the critical piece for bare repos)
+# System-wide gitattributes
 sudo cp forgejo/server-config/gitattributes /etc/gitattributes
 
-# Append merge driver registration + core.attributesFile to /etc/gitconfig
+# Merge driver registration in /etc/gitconfig
 sudo git config --system include.path /path/to/ifcurl/forgejo/server-config/gitconfig-ifcmerge
 ```
 
