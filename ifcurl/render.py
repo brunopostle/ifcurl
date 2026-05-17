@@ -545,7 +545,11 @@ def render(
             settings, model, _WORKER_COUNT, include=selector_elements
         )
     else:
-        exclude = list(model.by_type("IfcOpeningElement"))
+        exclude = (
+            list(model.by_type("IfcOpeningElement"))
+            + list(model.by_type("IfcSpace"))
+            + list(model.by_type("IfcAnnotation"))
+        )
         iterator = ifcopenshell.geom.iterator(
             settings,
             model,
@@ -701,7 +705,11 @@ def render_diff(
     # Pass 1: head model — full scene with diff colouring
     # ------------------------------------------------------------------
     settings_head = _build_geom_settings(model_head)
-    exclude_head = list(model_head.by_type("IfcOpeningElement"))
+    exclude_head = (
+        list(model_head.by_type("IfcOpeningElement"))
+        + list(model_head.by_type("IfcSpace"))
+        + list(model_head.by_type("IfcAnnotation"))
+    )
     iterator_head = ifcopenshell.geom.iterator(
         settings_head,
         model_head,
