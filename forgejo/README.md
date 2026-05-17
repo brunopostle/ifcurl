@@ -11,18 +11,18 @@ split into two tiers by what infrastructure they require.
 | Browser IFC viewer | `viewer.html` static asset | No |
 | PR diff 3D render | `ifcurl.js` + ifcurl service + **Nginx proxy** | No |
 | `[title](ifc://...)` links in markdown → inline preview | `ifcurl.js` + ifcurl service + **Nginx proxy** | No |
-| Bare `ifc://...` text in markdown → inline preview | Go patch + `PREVIEW_SERVICE_URL` in app.ini | **Yes** |
+| Bare `ifc://...` text in markdown → inline preview | `ifcurl.js` (JS text-node linkification) | No |
 
-All features except bare-URL markdown rendering work with static asset deployment
-only — no Forgejo rebuild required.  `ifcurl.js` detects `<a href="ifc://...">` links
-produced by Goldmark's standard link parser and replaces them with preview figures
-at page load.
+All features work with static asset deployment only — no Forgejo rebuild required.
+`ifcurl.js` handles both `<a href="ifc://...">` links produced by Goldmark's
+standard link parser and bare `ifc://...` text nodes, replacing both with preview
+figures at page load.
 
-The Go patch is needed **only** if you want bare `ifc://...` text in markdown
-(without `[title](...)` syntax) to render as a preview.  The Issue button in the
-viewer emits `[title](ifc://...)` link syntax, so normal issue/PR workflows work
-without the patch.  Minimising the patch surface is deliberate — every line of Go
-code must be re-verified against each Forgejo release.
+**Bare URL caveat:** bare `ifc://` URLs where the path or query parameters
+contain matched underscores (e.g. `_model_v2.ifc`) may be split by Goldmark's
+emphasis parser before `ifcurl.js` can linkify them.  Use the explicit
+`[label](ifc://...)` form in those cases — the viewer's **Issue** button always
+generates this safe form.
 
 The PR diff feature requires a **reverse proxy** (e.g. Nginx) to expose the
 ifcurl service at the same origin as Forgejo.  This is because the diff image is
@@ -37,10 +37,6 @@ deployments already sit behind Nginx for TLS termination; adding two
 
 ```
 forgejo/
-  go.patch                              ← diff against Forgejo source (apply once)
-  modules/markup/markdown/
-    ifc_url.go                          ← new Go source file (copy into source tree)
-    ifc_url_test.go                     ← Go tests (copy into source tree)
   custom/public/assets/
     viewer.html                         ← browser IFC viewer (no rebuild needed)
     viewer-url.js                       ← ifc:// URL parse/build/resolve logic (ES module)
@@ -67,64 +63,9 @@ For a self-contained local deployment of Forgejo + ifcurl on Windows using Docke
 
 - ifcurl API service + render service running (see [Running the preview service](#running-the-preview-service))
 - Nginx (or equivalent) in front of Forgejo if PR diff images are wanted
-- Forgejo source tree cloned and building cleanly (`go` 1.21+) — **only if**
-  markdown inline preview is wanted
 
-The patch was written against the `v13.0` branch of Forgejo. Check which
-Forgejo commit the patch was authored against with:
-
-```bash
-cd /path/to/forgejo
-git log --oneline modules/markup/markdown/markdown.go | head -3
-```
-
----
-
-## Applying the patch
-
-### 1. Copy new Go source files
-
-```bash
-cp forgejo/modules/markup/markdown/ifc_url.go     /path/to/forgejo/modules/markup/markdown/
-cp forgejo/modules/markup/markdown/ifc_url_test.go /path/to/forgejo/modules/markup/markdown/
-```
-
-### 2. Apply the diff to existing files
-
-```bash
-cd /path/to/forgejo
-git apply /path/to/ifcurl/forgejo/go.patch
-```
-
-This adds one line to `modules/markup/markdown/markdown.go` and six lines to
-`modules/setting/markup.go`. If the patch does not apply cleanly (e.g. after
-a Forgejo upstream upgrade), the changes are small enough to apply by hand —
-see `go.patch` for the exact hunks.
-
-### 3. Run the Go tests
-
-```bash
-cd /path/to/forgejo
-go test ./modules/markup/markdown/ -run TestIfcURL -v
-```
-
-All seven tests should pass before proceeding.
-
-### 4. Build and deploy Forgejo
-
-```bash
-cd /path/to/forgejo
-go build \
-  -tags 'sqlite sqlite_unlock_notify' \
-  -ldflags "-X 'forgejo.org/modules/setting.StaticRootPath=/usr/share/forgejo'" \
-  -o forgejo .
-
-sudo cp forgejo /usr/bin/forgejo
-sudo systemctl restart forgejo
-```
-
-Adjust build tags and `-ldflags` to match your existing Forgejo build
-configuration.
+No Forgejo source tree or Go toolchain is required — all features work with
+static asset deployment.
 
 ---
 
@@ -285,25 +226,6 @@ ifcurl serve --allowed-hosts localhost:3000
 non-private remote hosts, which is unsafe if the service is reachable from
 untrusted clients.
 
-## Configuration
-
-Add to `/etc/forgejo/conf/app.ini`:
-
-```ini
-[ifcurl]
-PREVIEW_SERVICE_URL = http://localhost:8000
-```
-
-`PREVIEW_SERVICE_URL` is used **server-side** by Forgejo's markdown renderer to
-fetch preview images when rendering ifc:// links in issue descriptions and
-comments.  It runs on the Forgejo server itself, so `localhost:8000` is the
-right value.
-
-If left empty, ifc:// links in markdown render as plain links with no preview
-image.
-
----
-
 ## Nginx reverse-proxy for PR diff images
 
 The PR diff viewer (Case 3 in `footer.tmpl`) injects `<img src="/render_diff?…">`
@@ -427,13 +349,6 @@ identify `.ifc` files correctly.
 
 ## Upgrading Forgejo
 
-After upgrading Forgejo upstream:
-
-1. Re-apply `go.patch` (or apply the two hunks by hand if context has shifted).
-2. Copy `ifc_url.go` and `ifc_url_test.go` back in — they are not modified by
-   upstream.
-3. Run the Go tests to verify compatibility.
-4. Rebuild and redeploy.
-
-Custom assets and `footer.tmpl` do not require a rebuild and are unaffected by
-Forgejo upgrades.
+Custom assets (`viewer.html`, `ifcurl.js`, etc.) and `footer.tmpl` are
+unaffected by Forgejo upstream upgrades — redeploy them after each asset
+change and restart Forgejo once after updating `footer.tmpl`.

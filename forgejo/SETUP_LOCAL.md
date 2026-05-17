@@ -195,18 +195,6 @@ Open `http://localhost:3000` and complete the Forgejo setup wizard.
 
 ---
 
-## Step 6 — Add ifcurl config to Forgejo
-
-The setup wizard writes its own `app.ini` inside the container. After
-completing the wizard, append the ifcurl setting and restart:
-
-```bash
-MSYS_NO_PATHCONV=1 docker exec forgejo sh -c 'printf "\n[ifcurl]\nPREVIEW_SERVICE_URL = http://ifcurl:8000\n" >> /data/gitea/conf/app.ini'
-docker compose restart forgejo
-```
-
----
-
 ## Verify the setup
 
 Check that Forgejo is serving the ifcurl assets:
@@ -228,7 +216,7 @@ You should see JavaScript, not a 404.
 | PR diff 3D renders (green=added, red=removed) | Yes |
 | `[label](ifc://...)` links in markdown → inline preview | Yes |
 | CLI rendering (`ifcurl render "ifc://..."`) | Yes |
-| Bare `ifc://...` text in markdown | No — needs Go patch + Forgejo rebuild |
+| Bare `ifc://...` text in markdown | Yes (avoid paired underscores in paths — use `[label](ifc://...)` form) |
 
 For normal workflows, use `[label](ifc://...)` link syntax — the viewer's
 **Issue** button generates this format automatically.
@@ -278,6 +266,5 @@ docker compose up -d
 - The ifcurl service clones remote git repos as bare repos into the container's
   cache on first use. Mutable refs (`@heads/`, `@HEAD`) trigger a `git fetch`
   on each request; immutable refs (commit hashes, tags) use the cache as-is.
-- The Go patch in the ifcurl repo was written against Forgejo v13.0. As of
-  this writing the latest release is v15.0.0. The patch is optional and only
-  needed for bare `ifc://` URL rendering in markdown.
+- No Go patch or Forgejo rebuild is needed — all features including bare
+  `ifc://` URL rendering are handled client-side by `ifcurl.js`.
