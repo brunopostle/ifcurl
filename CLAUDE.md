@@ -120,6 +120,8 @@ systemctl is-active ifcurl-api.service forgejo
 
 **10 — Markdown ifc:// link preview.** Post an issue containing `[label](ifc://localhost:3000/org/repo@heads/main?path=file.ifc)`. Rendered markdown should replace the link with a `<figure>` containing a preview image and URL caption.
 
+> **Note — bare vs. linked form.** Bare `ifc://` URLs in markdown (e.g. pasted directly) are linkified by `linkifyBareIfcUrls()` in `ifcurl.js`. This works for most paths, but if the file path contains matched underscores (e.g. `_model_v2.ifc`), Goldmark renders them as `<em>` tags and splits the URL — the bare form will fail. Use the explicit link form `[label](ifc://...)` for any URL where the path or query parameters contain paired underscores.
+
 **11 — PR diff view.** Open a PR modifying an `.ifc` file. The `/pulls/<N>/files` page should inject a render-diff image below each `.ifc` file header (fetched from `/render_diff?base=...&head=...`).
 
 **12 — Commit diff view.** Open a commit that modifies an `.ifc` file. Same render-diff image below the file header. Added-only file → plain preview; deleted-only → preview of old version.
