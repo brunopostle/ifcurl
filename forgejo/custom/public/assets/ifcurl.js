@@ -33,7 +33,7 @@ function linkifyBareIfcUrls() {
   const nodes = [];
   let n;
   while ((n = walker.nextNode())) {
-    if (n.parentElement.closest('a, code, pre, .ifcurl-preview')) continue;
+    if (n.parentElement.closest('a, code, pre, .ifcurl-preview, [contenteditable]')) continue;
     if (IFC_URL.test(n.textContent)) nodes.push(n);
     IFC_URL.lastIndex = 0;
   }
@@ -66,7 +66,7 @@ function linkifyBareIfcUrls() {
 function replaceIfcAnchors() {
   const origin = window.location.origin;
   document.querySelectorAll('a[href^="ifc://"]').forEach(function(a) {
-    if (a.closest(".ifcurl-preview")) return;
+    if (a.closest(".ifcurl-preview, [contenteditable]")) return;
     const ifcUrl = a.getAttribute("href");
     const img = document.createElement("img");
     img.src = origin + "/preview?url=" + encodeURIComponent(ifcUrl);
