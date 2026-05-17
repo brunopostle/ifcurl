@@ -860,10 +860,13 @@ async function generateBcf(title, comment) {
 
   // Capture a snapshot of the current view for the BCF zip.
   let snapshotB64 = null;
+  console.log("BCF snapshot: rendererCanvas =", rendererCanvas);
   if (rendererCanvas) {
     try {
-      snapshotB64 = rendererCanvas.toDataURL("image/png").split(",")[1];
-    } catch (_) { /* context lost or cross-origin — skip */ }
+      const dataUrl = rendererCanvas.toDataURL("image/png");
+      console.log("BCF snapshot: dataUrl length =", dataUrl.length, "prefix =", dataUrl.slice(0, 30));
+      snapshotB64 = dataUrl.split(",")[1];
+    } catch (e) { console.warn("BCF snapshot failed:", e); }
   }
 
   const topicGuid = crypto.randomUUID();
