@@ -24,10 +24,45 @@ function makeViewerLink(info, label, cls) {
   return a;
 }
 
+// Walk text nodes in rendered markdown and wrap bare ifc:// URLs in anchors so
+// that replaceIfcAnchors() can promote them to preview figures.
+function linkifyBareIfcUrls() {
+  const IFC_URL = /ifc:\/\/[^\s<>"']+/g;
+  const TRAILING = /[.,;:!?)]+$/;
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  let n;
+  while ((n = walker.nextNode())) {
+    if (n.parentElement.closest('a, code, pre, .ifcurl-preview')) continue;
+    if (IFC_URL.test(n.textContent)) nodes.push(n);
+    IFC_URL.lastIndex = 0;
+  }
+  nodes.forEach(function(textNode) {
+    const text = textNode.textContent;
+    const parts = text.split(IFC_URL);
+    const matches = text.match(IFC_URL);
+    if (!matches) return;
+    const frag = document.createDocumentFragment();
+    parts.forEach(function(part, i) {
+      if (part) frag.appendChild(document.createTextNode(part));
+      if (matches[i]) {
+        let url = matches[i];
+        const tail = TRAILING.exec(url);
+        if (tail) url = url.slice(0, tail.index);
+        const a = document.createElement('a');
+        a.href = url;
+        a.textContent = url;
+        frag.appendChild(a);
+        if (tail) frag.appendChild(document.createTextNode(tail[0]));
+      }
+    });
+    textNode.parentNode.replaceChild(frag, textNode);
+  });
+}
+
 // Replace <a href="ifc://..."> links in rendered markdown with preview figures.
-// Handles [title](ifc://...) links produced by Goldmark's standard link parser —
-// no Go extension required.  Skips anchors already inside .ifcurl-preview (those
-// were rendered server-side by ifc_url.go when the patched binary is in use).
+// Handles [title](ifc://...) links produced by Goldmark's standard link parser
+// and bare ifc:// URLs promoted by linkifyBareIfcUrls().
 function replaceIfcAnchors() {
   const origin = window.location.origin;
   document.querySelectorAll('a[href^="ifc://"]').forEach(function(a) {
@@ -62,6 +97,7 @@ function replaceIfcAnchors() {
 function init() {
   const host = window.location.host;
 
+  linkifyBareIfcUrls();
   replaceIfcAnchors();
 
   // -----------------------------------------------------------------------
