@@ -29,14 +29,16 @@ function makeViewerLink(info, label, cls) {
 function linkifyBareIfcUrls() {
   const IFC_URL = /ifc:\/\/[^\s<>"']+/g;
   const TRAILING = /[.,;:!?)]+$/;
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   const nodes = [];
-  let n;
-  while ((n = walker.nextNode())) {
-    if (n.parentElement.closest('a, code, pre, .ifcurl-preview, [contenteditable]')) continue;
-    if (IFC_URL.test(n.textContent)) nodes.push(n);
-    IFC_URL.lastIndex = 0;
-  }
+  document.querySelectorAll('.markup').forEach(function(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = walker.nextNode())) {
+      if (n.parentElement.closest('a, code, pre, .ifcurl-preview')) continue;
+      if (IFC_URL.test(n.textContent)) nodes.push(n);
+      IFC_URL.lastIndex = 0;
+    }
+  });
   nodes.forEach(function(textNode) {
     const text = textNode.textContent;
     const parts = text.split(IFC_URL);
@@ -65,8 +67,8 @@ function linkifyBareIfcUrls() {
 // and bare ifc:// URLs promoted by linkifyBareIfcUrls().
 function replaceIfcAnchors() {
   const origin = window.location.origin;
-  document.querySelectorAll('a[href^="ifc://"]').forEach(function(a) {
-    if (a.closest(".ifcurl-preview, [contenteditable]")) return;
+  document.querySelectorAll('.markup a[href^="ifc://"]').forEach(function(a) {
+    if (a.closest(".ifcurl-preview")) return;
     const ifcUrl = a.getAttribute("href");
     const img = document.createElement("img");
     img.src = origin + "/preview?url=" + encodeURIComponent(ifcUrl);
