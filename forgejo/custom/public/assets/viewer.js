@@ -5,7 +5,7 @@ import { parseIfcUrl, toRawUrl, buildIfcUrl as _buildIfcUrl } from "./viewer-url
 import { isSimpleTypeSelector, subtractIdMap, isCommitHash } from "./viewer-util.js";
 
 const params   = new URLSearchParams(window.location.search);
-const ifcUrl   = params.get("url") ?? "";
+let currentIfcUrl = params.get("url") ?? "";
 const statusEl = document.getElementById("status");
 const urlInput = document.getElementById("url-input");
 const fovInput = document.getElementById("fov-input");
@@ -37,16 +37,21 @@ const resizeObs = new ResizeObserver(() => {
 });
 resizeObs.observe(toolbar);
 
+let components     = null;
+let world          = null;
 let cameraControls = null;
 let threeCamera    = null;
 let activeClipper  = null;
 let loadedModel    = null;
 let rendererCanvas = null;
+// Raw HTTP URL of the loaded IFC file, captured once at model load time.
+// Used to decide whether a loadUrl call needs a full reload or an in-place update.
+let modelRawUrl = null;
 
 // Show previous-view snapshot while the new model loads.
 {
   const snap = sessionStorage.getItem("viewerSnapshot");
-  if (snap && ifcUrl) {
+  if (snap && currentIfcUrl) {
     const el = document.createElement("div");
     el.id = "snapshot-overlay";
     el.style.backgroundImage = `url("${snap}")`;
@@ -70,8 +75,8 @@ function buildIfcUrl() {
   );
 }
 
-// Populate structured fields from the current ifcUrl.
-const parsed = parseIfcUrl(ifcUrl);
+// Populate structured fields from the current URL.
+const parsed = parseIfcUrl(currentIfcUrl);
 if (parsed) {
   repoInput.value     = parsed.repo;
   refInput.value      = parsed.ref;
@@ -79,13 +84,13 @@ if (parsed) {
   selectorInput.value = parsed.selector;
   queryInput.value    = parsed.query;
 }
-urlInput.value = ifcUrl;
+urlInput.value = currentIfcUrl;
 
 // Initialise visibility dropdown from URL and show it when selector is non-empty.
 {
-  const qIdx = ifcUrl.indexOf("?");
+  const qIdx = currentIfcUrl.indexOf("?");
   const visVal = qIdx < 0 ? "highlight"
-    : (new URLSearchParams(ifcUrl.slice(qIdx + 1)).get("visibility") ?? "highlight");
+    : (new URLSearchParams(currentIfcUrl.slice(qIdx + 1)).get("visibility") ?? "highlight");
   visibilitySelect.value = visVal;
 }
 function syncVisibilityField() {
@@ -108,9 +113,9 @@ if (parsed && isCommitHash(parsed.ref)) {
         refSwitchBtn.textContent = `→ ${targetRef}`;
         refSwitchBtn.style.display = "";
         refSwitchBtn.addEventListener("click", () => {
-          const qI = ifcUrl.indexOf("?");
-          const base = qI < 0 ? ifcUrl : ifcUrl.slice(0, qI);
-          const tail = qI < 0 ? "" : ifcUrl.slice(qI);
+          const qI = currentIfcUrl.indexOf("?");
+          const base = qI < 0 ? currentIfcUrl : currentIfcUrl.slice(0, qI);
+          const tail = qI < 0 ? "" : currentIfcUrl.slice(qI);
           loadUrl(base.slice(0, base.lastIndexOf("@") + 1) + targetRef + tail);
         });
       })
@@ -124,10 +129,114 @@ if (parsed?.host && parsed?.repoSuffix) {
 }
 
 // -----------------------------------------------------------------------
+// Apply view-only param changes (camera, clip, selector, visibility, query)
+// in-place without re-fetching the IFC file.
+// -----------------------------------------------------------------------
+async function applyViewChanges(newUrl) {
+  const oldQIdx = currentIfcUrl.indexOf("?");
+  const oldQs   = new URLSearchParams(oldQIdx < 0 ? "" : currentIfcUrl.slice(oldQIdx + 1));
+  const newQIdx = newUrl.indexOf("?");
+  const newQs   = new URLSearchParams(newQIdx < 0 ? "" : newUrl.slice(newQIdx + 1));
+
+  // Update currentIfcUrl and the URL bar first so any triggered syncCameraUrl
+  // calls use the correct base.
+  currentIfcUrl  = newUrl;
+  urlInput.value = newUrl;
+  const pageUrl  = new URL(window.location.href);
+  pageUrl.searchParams.set("url", newUrl);
+  history.replaceState(null, "", pageUrl.toString());
+
+  // Sync structured form fields.
+  const parsedNew = parseIfcUrl(newUrl);
+  if (parsedNew) {
+    selectorInput.value = parsedNew.selector;
+    queryInput.value    = parsedNew.query;
+  }
+  const newVisibility = newQs.get("visibility") ?? "highlight";
+  visibilitySelect.value = newVisibility;
+  syncVisibilityField();
+
+  // Camera / projection.
+  const oldCamera = oldQs.get("camera") ?? "";
+  const newCamera = newQs.get("camera") ?? "";
+  const oldFov    = oldQs.get("fov")    ?? "";
+  const newFov    = newQs.get("fov")    ?? "";
+  const oldScale  = oldQs.get("scale")  ?? "";
+  const newScale  = newQs.get("scale")  ?? "";
+  if (newCamera !== oldCamera || newFov !== oldFov || newScale !== oldScale) {
+    await applyCameraParam(cameraControls, world.camera, newUrl);
+    // Flush camera-controls position into the Three.js camera matrix before rendering.
+    // setLookAt(false) sets the destination but doesn't write to Three.js until update().
+    cameraControls.update(0);
+    threeCamera = world.camera.three;
+    if (loadedModel) loadedModel.useCamera(threeCamera);
+    await components.get(OBC.FragmentsManager).core.update(true);
+  }
+
+  // Clipping planes.
+  const oldClips = oldQs.getAll("clip");
+  const newClips = newQs.getAll("clip");
+  if (JSON.stringify(newClips) !== JSON.stringify(oldClips) && activeClipper) {
+    activeClipper.deleteAll();
+    const planes = newClips.map(s => s.split(",").map(Number))
+      .filter(v => v.length === 6 && !v.some(isNaN));
+    for (const [px, py, pz, nx, ny, nz] of planes) {
+      activeClipper.createFromNormalAndCoplanarPoint(
+        world, toThree(nx, ny, nz).normalize(), toThree(px, py, pz)
+      );
+    }
+    const clipClearBtn = document.getElementById("clip-clear-btn");
+    clipClearBtn.style.display = activeClipper.list.size > 0 ? "" : "none";
+  }
+
+  // Selector / visibility.
+  const oldSelector   = oldQs.get("selector") ?? "";
+  const newSelector   = newQs.get("selector") ?? "";
+  const oldVisibility = oldQs.get("visibility") ?? "highlight";
+  if (newSelector !== oldSelector || newVisibility !== oldVisibility) {
+    const frags = components.get(OBC.FragmentsManager);
+    const hider = components.get(OBC.Hider);
+    await frags.resetHighlight();
+    await hider.set(true);
+    if (newSelector) {
+      statusEl.textContent = "Applying selector…";
+      await applySelector(components, loadedModel, newSelector, newUrl, newVisibility);
+    }
+    await frags.core.update(true);
+  }
+
+  // Query.
+  const oldQuery = oldQs.get("query") ?? "";
+  const newQuery = newQs.get("query") ?? "";
+  if (newQuery !== oldQuery) {
+    if (newQuery) await applyQuery(newUrl, newQuery);
+    else queryPanel.style.display = "none";
+  }
+
+  statusEl.textContent = "";
+}
+
+// -----------------------------------------------------------------------
 // Navigate to the viewer with a different ifc:// URL.
-// Captures a canvas snapshot for the transition overlay, then fades out.
+// If only view params changed (camera, clip, selector, visibility, query)
+// the changes are applied in-place without re-fetching the IFC model.
+// A full page reload only happens when the source changes (host/repo/ref/path).
 // -----------------------------------------------------------------------
 function loadUrl(url) {
+  // In-place update when the loaded IFC file is unchanged (only view params differ).
+  if (modelRawUrl) {
+    let rawUrl;
+    try { rawUrl = toRawUrl(url); } catch (_) { /* malformed url — fall through */ }
+    if (rawUrl && rawUrl === modelRawUrl) {
+      applyViewChanges(url).catch(err => {
+        statusEl.textContent = `Update error: ${err.message}`;
+        console.error(err);
+      });
+      return;
+    }
+  }
+
+  // Source changed → capture snapshot for seamless transition, then navigate.
   if (rendererCanvas) {
     try {
       const snap = rendererCanvas.toDataURL("image/jpeg", 0.6);
@@ -375,9 +484,9 @@ function syncCameraUrl(camera) {
     f(iu.x), f(iu.y), f(iu.z),
   ].join(",");
 
-  const qIdx = ifcUrl.indexOf("?");
-  const base = qIdx < 0 ? ifcUrl : ifcUrl.slice(0, qIdx);
-  const qs   = new URLSearchParams(qIdx < 0 ? "" : ifcUrl.slice(qIdx + 1));
+  const qIdx = currentIfcUrl.indexOf("?");
+  const base = qIdx < 0 ? currentIfcUrl : currentIfcUrl.slice(0, qIdx);
+  const qs   = new URLSearchParams(qIdx < 0 ? "" : currentIfcUrl.slice(qIdx + 1));
   qs.set("camera", cameraParam);
   if (camera.isPerspectiveCamera) {
     qs.set("fov", f(camera.fov).toString());
@@ -402,6 +511,7 @@ function syncCameraUrl(camera) {
   const newIfcUrl = base + "?" + qs.toString()
     .replace(/%2C/g, ",").replace(/%2B/g, "+").replace(/%24/g, "$");
 
+  currentIfcUrl  = newIfcUrl;
   urlInput.value = newIfcUrl;
 
   const pageUrl = new URL(window.location.href);
@@ -598,10 +708,10 @@ async function applyQuery(srcUrl, queryPath) {
 // Place the camera from ifc:// URL camera=/fov=/scale= params.
 // obcCamera is the OBC OrthoPerspectiveCamera instance (world.camera).
 // -----------------------------------------------------------------------
-async function applyCameraParam(controls, obcCamera) {
-  const qIdx = ifcUrl.indexOf("?");
+async function applyCameraParam(controls, obcCamera, url) {
+  const qIdx = url.indexOf("?");
   if (qIdx < 0) return false;
-  const qs = new URLSearchParams(ifcUrl.slice(qIdx + 1));
+  const qs = new URLSearchParams(url.slice(qIdx + 1));
 
   const camStr = qs.get("camera");
   if (!camStr) return false;
@@ -1046,16 +1156,16 @@ async function fetchBranchForCommit(host, repoSuffix, hash) {
 // Main
 // -----------------------------------------------------------------------
 async function main() {
-  if (!ifcUrl) {
+  if (!currentIfcUrl) {
     statusEl.textContent = "Fill in the fields above and press Enter, or paste an ifc:// URL.";
     return;
   }
 
   statusEl.textContent = "Loading…";
 
-  const components = new OBC.Components();
+  components       = new OBC.Components();
   const worlds     = components.get(OBC.Worlds);
-  const world      = worlds.create();
+  world            = worlds.create();
   const container  = document.getElementById("viewer");
 
   world.scene    = new OBC.SimpleScene(components);
@@ -1091,7 +1201,7 @@ async function main() {
   statusEl.textContent = "Fetching IFC file…";
   let buffer;
   try {
-    const resp = await fetch(toRawUrl(ifcUrl));
+    const resp = await fetch(toRawUrl(currentIfcUrl));
     if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
     const contentLength = resp.headers.get("Content-Length");
     const total = contentLength ? parseInt(contentLength, 10) : 0;
@@ -1125,18 +1235,19 @@ async function main() {
   try {
     const model  = await ifcLoader.load(buffer, true, "model");
     loadedModel  = model;
+    modelRawUrl  = toRawUrl(currentIfcUrl);
     world.scene.three.add(model.object);
 
-    const hasCam = await applyCameraParam(cameraControls, world.camera);
+    const hasCam = await applyCameraParam(cameraControls, world.camera, currentIfcUrl);
     threeCamera = world.camera.three; // refresh: may now be ortho
     if (!hasCam && !model.box.isEmpty()) {
       await cameraControls.fitToBox(model.box, false);
     }
     model.useCamera(threeCamera);
 
-    const qIdxPost = ifcUrl.indexOf("?");
+    const qIdxPost = currentIfcUrl.indexOf("?");
     const qsPost = new URLSearchParams(
-      qIdxPost < 0 ? "" : ifcUrl.slice(qIdxPost + 1)
+      qIdxPost < 0 ? "" : currentIfcUrl.slice(qIdxPost + 1)
     );
 
     const clips = qsPost.getAll("clip")
@@ -1182,11 +1293,11 @@ async function main() {
 
     if (selectorStr) {
       statusEl.textContent = "Applying selector…";
-      await applySelector(components, model, selectorStr, ifcUrl, visibility);
+      await applySelector(components, model, selectorStr, currentIfcUrl, visibility);
     }
 
     if (selectorStr && queryStr) {
-      await applyQuery(ifcUrl, queryStr);
+      await applyQuery(currentIfcUrl, queryStr);
     }
 
     await fragments.core.update(true);
