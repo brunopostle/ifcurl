@@ -47,17 +47,6 @@ let rendererCanvas = null;
 // Raw HTTP URL of the loaded IFC file, captured once at model load time.
 // Used to decide whether a loadUrl call needs a full reload or an in-place update.
 let modelRawUrl = null;
-
-// Show previous-view snapshot while the new model loads.
-{
-  const snap = sessionStorage.getItem("viewerSnapshot");
-  if (snap && currentIfcUrl) {
-    const el = document.createElement("div");
-    el.id = "snapshot-overlay";
-    el.style.backgroundImage = `url("${snap}")`;
-    document.body.appendChild(el);
-  }
-}
 function removeSnapshot() {
   const el = document.getElementById("snapshot-overlay");
   if (!el) return;
@@ -236,18 +225,11 @@ function loadUrl(url) {
     }
   }
 
-  // Source changed → capture snapshot for seamless transition, then navigate.
+  // Capture a JPEG snapshot of the WebGL canvas so the overlay script on the
+  // new page can cover the blank canvas while the model reloads.
   if (rendererCanvas) {
     try {
-      const snap = rendererCanvas.toDataURL("image/jpeg", 0.6);
-      sessionStorage.setItem("viewerSnapshot", snap);
-      // Cover the 3D view with the snapshot NOW, before the page unloads,
-      // so the browser's navigation blank is hidden behind the static image.
-      const cover = document.createElement("div");
-      cover.style.cssText = "position:fixed;inset:0;z-index:9999;" +
-        "background:#1c1c1e center/contain no-repeat";
-      cover.style.backgroundImage = `url("${snap}")`;
-      document.body.appendChild(cover);
+      sessionStorage.setItem("viewerSnapshot", rendererCanvas.toDataURL("image/jpeg", 0.6));
     } catch (_) { /* context-lost or cross-origin — skip */ }
   }
   const pageUrl = new URL(window.location.href);
@@ -298,13 +280,43 @@ for (const el of [repoInput, refInput, pathInput, selectorInput, queryInput]) {
 
 queryCloseBtn.addEventListener("click", () => { queryPanel.style.display = "none"; });
 
-// ▾ button: if the ref field already has a value, navigate; otherwise clear
-// + focus so the datalist shows all refs.
+// ▾ button: show a custom dropdown of available refs.
 const refPickBtn = document.getElementById("ref-pick-btn");
 refPickBtn.addEventListener("click", () => {
-  if (refInput.value.trim()) { loadFromFields(); return; }
-  refInput.value = "";
-  refInput.focus();
+  const existing = document.getElementById("ref-dropdown");
+  if (existing) { existing.remove(); return; }
+  const dl = document.getElementById("ref-list");
+  const opts = [...dl.options].map(o => o.value);
+  if (!opts.length) { refInput.value = ""; refInput.focus(); return; }
+  const rect = refInput.getBoundingClientRect();
+  const ul = document.createElement("ul");
+  ul.id = "ref-dropdown";
+  ul.style.cssText = `position:fixed;top:${rect.bottom + 2}px;left:${rect.left}px;
+    min-width:${rect.width}px;max-height:220px;overflow-y:auto;z-index:50;
+    background:#2c2c2e;border:1px solid rgba(255,255,255,0.15);border-radius:4px;
+    list-style:none;padding:2px 0;`;
+  for (const val of opts) {
+    const li = document.createElement("li");
+    li.textContent = val;
+    li.style.cssText = "padding:4px 8px;font-size:12px;font-family:monospace;" +
+      "cursor:pointer;color:#f0f0f0;white-space:nowrap;";
+    li.addEventListener("mouseover", () => { li.style.background = "rgba(255,255,255,0.1)"; });
+    li.addEventListener("mouseout",  () => { li.style.background = ""; });
+    li.addEventListener("click", () => {
+      refInput.value = val;
+      ul.remove();
+      loadFromFields();
+    });
+    ul.appendChild(li);
+  }
+  document.body.appendChild(ul);
+  const close = e => {
+    if (!ul.contains(e.target) && e.target !== refPickBtn) {
+      ul.remove();
+      document.removeEventListener("click", close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener("click", close, true), 0);
 });
 
 // Auto-navigate when user selects a datalist option (exact match).
@@ -1304,7 +1316,9 @@ async function main() {
 
     syncCameraUrl(threeCamera);
     cameraControls.addEventListener("rest", () => syncCameraUrl(threeCamera));
-    removeSnapshot();
+    // Wait for the renderer to paint at least one frame before fading the overlay,
+    // otherwise the WebGL canvas may still be blank when the fade starts.
+    requestAnimationFrame(() => requestAnimationFrame(() => removeSnapshot()));
 
     populateMetaPanel(components).catch(err => {
       console.warn("Metadata panel unavailable:", err.message);
@@ -1317,5 +1331,9 @@ async function main() {
     console.error(err);
   }
 }
+
+// bfcache restore can leave the WebGL canvas blank. Reload fresh so the
+// inline snapshot script runs and the model reloads properly.
+window.addEventListener("pageshow", (e) => { if (e.persisted) window.location.reload(); });
 
 main();

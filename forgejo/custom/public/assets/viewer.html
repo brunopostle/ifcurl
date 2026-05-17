@@ -166,6 +166,18 @@
   </style>
 </head>
 <body>
+<script>
+(function() {
+  try {
+    var snap = sessionStorage.getItem("viewerSnapshot");
+    if (!snap || !new URLSearchParams(location.search).get("url")) return;
+    var el = document.createElement("div");
+    el.id = "snapshot-overlay";
+    el.style.backgroundImage = "url(" + snap + ")";
+    document.body.appendChild(el);
+  } catch(_) {}
+})();
+</script>
   <div id="toolbar">
     <!-- Row 1: raw URL + FOV -->
     <div class="trow">
