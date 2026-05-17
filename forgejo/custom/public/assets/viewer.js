@@ -583,6 +583,51 @@ function setupClipper(components, world, clips) {
 }
 
 // -----------------------------------------------------------------------
+// Strip Clearance representation geometry from an IFC STEP buffer so that
+// door-swing and equipment-clearance volumes are never rendered.
+//
+// web-ifc disposes its IfcAPI after load, so context filtering must happen
+// before the buffer reaches ifcLoader.load().  IFCSHAPEREPRESENTATION items
+// are always bare entity refs (#NNN) with no nested parens, so the items
+// list (…) is safe to match with a simple non-nested regex.
+// -----------------------------------------------------------------------
+function removeClearanceGeometry(buffer) {
+  // Only process IFC-SPF (STEP Physical Format) files.
+  const sig = [73, 83, 79, 45, 49, 48]; // 'ISO-10'
+  if (buffer.length < 6 || sig.some((b, i) => buffer[i] !== b)) return buffer;
+
+  const text = new TextDecoder().decode(buffer);
+
+  // 1. Find subcontext IDs where ContextIdentifier = 'Clearance'.
+  const ctxIds = new Set();
+  for (const m of text.matchAll(
+    /#(\d+)\s*=\s*IFCGEOMETRICREPRESENTATIONSUBCONTEXT\s*\(\s*'Clearance'/gi
+  )) ctxIds.add(m[1]);
+  if (!ctxIds.size) return buffer;
+
+  // 2. Find IFCSHAPEREPRESENTATION IDs that reference those contexts.
+  const repIds = new Set();
+  for (const ctxId of ctxIds)
+    for (const m of text.matchAll(
+      new RegExp(`#(\\d+)\\s*=\\s*IFCSHAPEREPRESENTATION\\s*\\(\\s*#${ctxId}\\s*,`, 'gi')
+    )) repIds.add(m[1]);
+  if (!repIds.size) return buffer;
+
+  // 3. Empty the items list of each clearance shape representation.
+  let modified = text;
+  for (const repId of repIds)
+    modified = modified.replace(
+      new RegExp(
+        `(#${repId}\\s*=\\s*IFCSHAPEREPRESENTATION\\s*\\([^,]+,[^,]+,[^,]+,)\\([^)]*\\)`,
+        'gi'
+      ),
+      '$1()'
+    );
+
+  return new TextEncoder().encode(modified);
+}
+
+// -----------------------------------------------------------------------
 // Apply selector= by isolating matching IFC elements.
 //
 // Simple selectors (IFC type names, "+" union): handled client-side.
@@ -1242,6 +1287,8 @@ async function main() {
     statusEl.textContent = `Fetch error: ${err.message}`;
     return;
   }
+
+  buffer = removeClearanceGeometry(buffer);
 
   statusEl.textContent = "Parsing IFC…";
   try {
