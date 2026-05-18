@@ -34,8 +34,9 @@ Credentials are never embedded in the URL. Authentication is handled by the
 platform's git credential store (desktop apps) or by sideloaded tokens
 (preview service).
 
-SCP-style SSH addresses (`git@host:org/repo`) are normalised to
-`ifc://git@host/org/repo` when generating URLs.
+SCP-style SSH addresses (`user@host:org/repo`) are normalised to
+`ifc://user@host/org/repo` when generating URLs, where `user` is the
+server's configured git user (commonly `git`, but may differ — e.g. `forgejo`).
 
 ### Ref format
 

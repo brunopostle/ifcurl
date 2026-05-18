@@ -19,12 +19,7 @@
 # NOTE: apt upgrades to the git package will overwrite /usr/bin/git.
 # After any git package upgrade, reinstall this wrapper.
 
-is_merge_file=false
-for arg in "$@"; do
-    [ "$arg" = "merge-file" ] && is_merge_file=true && break
-done
-
-if $is_merge_file; then
+if [ "$1" = "merge-file" ]; then
     files=()
     past_subcommand=false
     skip_next=false
@@ -51,10 +46,10 @@ if $is_merge_file; then
             dir=$(dirname "$current")
             [[ "$base" != /* ]] && base="$dir/$base"
             [[ "$other" != /* ]] && other="$dir/$other"
-            ifcmerge --prioritise-local "$base" "$current" "$other" "$current"
+            /usr/local/bin/ifcmerge --prioritise-local "$base" "$current" "$other" "$current"
             exit $?
         fi
     fi
 fi
 
-exec /usr/bin/git.real "$@"
+exec -a "$0" /usr/bin/git.real "$@"
