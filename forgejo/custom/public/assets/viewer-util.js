@@ -1,4 +1,4 @@
-// Copyright 2026 The Forgejo Authors. All rights reserved.
+// Copyright 2026 Bruno Postle <bruno@postle.net>
 // SPDX-License-Identifier: MIT
 //
 // Pure utility functions shared between viewer.js, ifcurl.js, and tests.

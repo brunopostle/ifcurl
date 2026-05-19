@@ -1,5 +1,6 @@
 # IFC URL — OpenCDE Documents API routes
 # Copyright (C) 2026 Bruno Postle <bruno@postle.net>
+# SPDX-License-Identifier: LGPL-3.0-or-later
 #
 # This file is part of IFC URL.
 #

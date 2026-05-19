@@ -1,4 +1,4 @@
-// Copyright 2026 The Forgejo Authors. All rights reserved.
+// Copyright 2026 Bruno Postle <bruno@postle.net>
 // SPDX-License-Identifier: MIT
 //
 // Pure ifc:// URL logic shared between viewer.html and tests.

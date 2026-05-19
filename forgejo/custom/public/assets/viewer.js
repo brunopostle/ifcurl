@@ -1,4 +1,4 @@
-// Copyright 2026 The Forgejo Authors. All rights reserved.
+// Copyright 2026 Bruno Postle <bruno@postle.net>
 // SPDX-License-Identifier: MIT
 import { THREE, OBC, OBCF, JSZip } from "/assets/viewer-deps.js";
 import { parseIfcUrl, toRawUrl, buildIfcUrl as _buildIfcUrl } from "./viewer-url.js";
