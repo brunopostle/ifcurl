@@ -562,3 +562,127 @@ class TestFetchIfcPath:
         path2, _ = fetch_ifc_path(url)
         assert path1 != path2
         assert path2.read_bytes() == b"IFC4\nUPDATED\n"
+
+
+# ---------------------------------------------------------------------------
+# get_genesis_commit — project identity key
+# ---------------------------------------------------------------------------
+
+
+import hashlib
+
+from ifcurl.git import get_genesis_commit, _compute_genesis
+
+
+def _make_repo(path: Path, filename: str = "model.ifc") -> "git.Repo":
+    """Create a minimal git repo with one commit in *path*."""
+    import git as gitpkg
+
+    path.mkdir(parents=True, exist_ok=True)
+    (path / filename).write_bytes(b"IFC4\n")
+    repo = gitpkg.Repo.init(str(path))
+    with repo.config_writer() as cw:
+        cw.set_value("user", "name", "Test")
+        cw.set_value("user", "email", "t@t.com")
+    repo.index.add([filename])
+    repo.index.commit("init")
+    return repo
+
+
+class TestComputeGenesis:
+    def test_returns_40_hex_chars(self, local_ifc_repo):
+        import git as gitpkg
+
+        repo = gitpkg.Repo(local_ifc_repo["path"])
+        hexsha = _compute_genesis(repo)
+        assert len(hexsha) == 40
+        assert all(c in "0123456789abcdef" for c in hexsha)
+
+    def test_single_commit_repo_genesis_is_head(self, local_ifc_repo):
+        import git as gitpkg
+
+        repo = gitpkg.Repo(local_ifc_repo["path"])
+        assert _compute_genesis(repo) == local_ifc_repo["hexsha"]
+
+    def test_genesis_unchanged_after_more_commits(self, tmp_path):
+        import git as gitpkg
+
+        repo = _make_repo(tmp_path / "repo")
+        genesis_before = _compute_genesis(repo)
+
+        (tmp_path / "repo" / "model.ifc").write_bytes(b"IFC4\nV2\n")
+        repo.index.add(["model.ifc"])
+        repo.index.commit("second")
+
+        assert _compute_genesis(repo) == genesis_before
+
+    def test_cloned_repo_same_genesis(self, tmp_path, local_ifc_repo):
+        import git as gitpkg
+
+        original = gitpkg.Repo(local_ifc_repo["path"])
+        fork = gitpkg.Repo.clone_from(local_ifc_repo["path"], str(tmp_path / "fork"))
+        assert _compute_genesis(fork) == _compute_genesis(original)
+
+    def test_unrelated_repos_differ(self, tmp_path, local_ifc_repo):
+        import git as gitpkg
+
+        unrelated = _make_repo(tmp_path / "other")
+        original = gitpkg.Repo(local_ifc_repo["path"])
+        assert _compute_genesis(unrelated) != _compute_genesis(original)
+
+
+class TestGetGenesisCommit:
+    def test_local_repo(self, local_ifc_repo):
+        url = _local_url(local_ifc_repo["path"])
+        genesis = get_genesis_commit(url)
+        assert genesis == local_ifc_repo["hexsha"]
+
+    def test_forks_share_genesis(self, tmp_path, local_ifc_repo):
+        import git as gitpkg
+
+        gitpkg.Repo.clone_from(local_ifc_repo["path"], str(tmp_path / "fork"))
+        url_orig = _local_url(local_ifc_repo["path"])
+        url_fork = _local_url(str(tmp_path / "fork"))
+        assert get_genesis_commit(url_orig) == get_genesis_commit(url_fork)
+
+    def test_genesis_cached_for_remote_url(self, tmp_path, local_ifc_repo, monkeypatch):
+        import git as gitpkg
+
+        monkeypatch.setattr("ifcurl.git.user_cache_dir", lambda *a, **kw: str(tmp_path))
+
+        # Pre-populate bare cache as _open_remote would
+        remote_url = "https://example.com/org/repo"
+        url_hash = hashlib.sha256(remote_url.encode()).hexdigest()[:24]
+        cache_dir = tmp_path / url_hash
+        git_dir = cache_dir / "repo.git"
+        gitpkg.Repo.clone_from(local_ifc_repo["path"], str(git_dir), bare=True)
+        (cache_dir / "remote_url").write_text(remote_url)
+
+        url = IfcUrl.parse(f"ifc://example.com/org/repo@{local_ifc_repo['hexsha']}?path=model.ifc")
+        genesis = get_genesis_commit(url)
+
+        genesis_file = cache_dir / "genesis_commit"
+        assert genesis_file.exists()
+        assert genesis_file.read_text().strip() == genesis
+
+    def test_cache_reused_on_second_call(self, tmp_path, local_ifc_repo, monkeypatch):
+        import git as gitpkg
+
+        monkeypatch.setattr("ifcurl.git.user_cache_dir", lambda *a, **kw: str(tmp_path))
+
+        remote_url = "https://example.com/org/repo2"
+        url_hash = hashlib.sha256(remote_url.encode()).hexdigest()[:24]
+        cache_dir = tmp_path / url_hash
+        git_dir = cache_dir / "repo.git"
+        gitpkg.Repo.clone_from(local_ifc_repo["path"], str(git_dir), bare=True)
+        (cache_dir / "remote_url").write_text(remote_url)
+
+        url = IfcUrl.parse(f"ifc://example.com/org/repo2@{local_ifc_repo['hexsha']}?path=model.ifc")
+        genesis1 = get_genesis_commit(url)
+
+        # Overwrite the cache file with a sentinel — second call must return it
+        sentinel = "a" * 40
+        (cache_dir / "genesis_commit").write_text(sentinel)
+        genesis2 = get_genesis_commit(url)
+
+        assert genesis2 == sentinel  # read from cache, not recomputed

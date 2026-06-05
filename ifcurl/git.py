@@ -187,9 +187,67 @@ def fetch_ifc_path(ifc_url: IfcUrl, token: str | None = None) -> tuple[Path, boo
     return path, is_stale
 
 
+def get_genesis_commit(ifc_url: IfcUrl, token: str | None = None) -> str:
+    """Return the genesis (root) commit hexsha for the repo identified by *ifc_url*.
+
+    The genesis commit is the oldest ancestor — the commit with no parents.
+    It is a stable project identity key shared across all forks and across
+    HTTPS/SSH URL forms of the same repository.
+
+    For remote repos the result is cached in ``<cache_dir>/genesis_commit``
+    alongside the bare clone so that subsequent calls skip the git command.
+    For local repos the value is computed fresh on each call.
+
+    :param ifc_url: A parsed :class:`IfcUrl`.
+    :param token: Optional bearer token for HTTPS authentication.
+    :raises ImportError: If GitPython is not installed.
+    :raises ValueError: If the repository has no commits or cannot be reached.
+    """
+    if not _HAS_GITPYTHON:
+        raise ImportError(
+            "GitPython is not installed.  Install with: pip install gitpython"
+        )
+
+    is_remote = ifc_url.transport != "local"
+
+    if is_remote:
+        cache_dir = _cache_dir_for(ifc_url.git_remote_url())
+        genesis_file = cache_dir / "genesis_commit"
+        if genesis_file.exists():
+            return genesis_file.read_text().strip()
+
+    repo, _ = _get_repo(ifc_url, token=token)
+    hexsha = _compute_genesis(repo)
+
+    if is_remote:
+        genesis_file.write_text(hexsha)
+
+    return hexsha
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _compute_genesis(repo: "git.Repo") -> str:
+    """Return the hexsha of the root commit(s) reachable from HEAD.
+
+    For repos with a single root (the common case) this is unambiguous.
+    For repos with multiple roots (unrelated histories merged together)
+    the lexicographically smallest hexsha is returned for a stable result.
+
+    :raises ValueError: If the repository has no commits.
+    """
+    try:
+        result = repo.git.rev_list("HEAD", max_parents=0)
+    except git.exc.GitCommandError as exc:
+        raise ValueError(f"Cannot compute genesis commit: {exc.stderr.strip()}") from exc
+
+    hexshas = [h for h in result.strip().split("\n") if h]
+    if not hexshas:
+        raise ValueError("Repository has no commits")
+    return min(hexshas)
 
 
 def _materialise(base_dir: Path, hexsha: str, file_path: str, data: bytes) -> Path:
