@@ -17,8 +17,8 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with IFC URL.  If not, see <http://www.gnu.org/licenses/>.
 
-from ifcurl.git import fetch_ifc, fetch_ifc_bytes
+from ifcurl.git import fetch_ifc, fetch_ifc_bytes, fetch_ifc_path
 from ifcurl.url import IfcUrl
 
 __version__ = "0.0.0"
-__all__ = ["IfcUrl", "fetch_ifc", "fetch_ifc_bytes"]
+__all__ = ["IfcUrl", "fetch_ifc", "fetch_ifc_bytes", "fetch_ifc_path"]

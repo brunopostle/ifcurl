@@ -469,3 +469,96 @@ class TestCacheCli:
         _cmd_cache(_cache_args(cache_cmd="prune", max_gb=None))
         out = capsys.readouterr().out
         assert "Freed" in out
+
+
+# ---------------------------------------------------------------------------
+# fetch_ifc_path — file materialisation
+# ---------------------------------------------------------------------------
+
+
+from ifcurl.git import fetch_ifc_path, _materialise
+
+
+class TestMaterialise:
+    def test_returns_path(self, tmp_path, local_ifc_repo):
+        result = _materialise(tmp_path, "abc123", "model.ifc", b"data")
+        assert isinstance(result, Path)
+
+    def test_file_exists(self, tmp_path, local_ifc_repo):
+        result = _materialise(tmp_path, "abc123", "model.ifc", b"data")
+        assert result.exists()
+
+    def test_file_contains_data(self, tmp_path):
+        data = b"IFC4\x00\xFF"
+        result = _materialise(tmp_path, "deadbeef", "structure.ifc", data)
+        assert result.read_bytes() == data
+
+    def test_hexsha_in_path(self, tmp_path):
+        result = _materialise(tmp_path, "cafebabe", "model.ifc", b"x")
+        assert "cafebabe" in str(result)
+
+    def test_basename_preserved(self, tmp_path):
+        result = _materialise(tmp_path, "abc", "models/sub/structure.ifc", b"x")
+        assert result.name == "structure.ifc"
+
+    def test_not_rewritten_if_exists(self, tmp_path):
+        result = _materialise(tmp_path, "abc123", "model.ifc", b"original")
+        result.write_bytes(b"modified")
+        _materialise(tmp_path, "abc123", "model.ifc", b"original")
+        assert result.read_bytes() == b"modified"
+
+
+class TestFetchIfcPath:
+    def test_returns_path_and_stale_flag(self, local_ifc_repo):
+        url = _local_url(local_ifc_repo["path"])
+        path, is_stale = fetch_ifc_path(url)
+        assert isinstance(path, Path)
+        assert is_stale is False
+
+    def test_file_exists_with_correct_content(self, local_ifc_repo):
+        url = _local_url(local_ifc_repo["path"])
+        path, _ = fetch_ifc_path(url)
+        assert path.exists()
+        assert path.read_bytes() == local_ifc_repo["bytes"]
+
+    def test_hexsha_in_path(self, local_ifc_repo):
+        url = _local_url(local_ifc_repo["path"])
+        path, _ = fetch_ifc_path(url)
+        assert local_ifc_repo["hexsha"] in str(path)
+
+    def test_basename_is_ifc_filename(self, local_ifc_repo):
+        url = _local_url(local_ifc_repo["path"])
+        path, _ = fetch_ifc_path(url)
+        assert path.name == "model.ifc"
+
+    def test_stable_across_calls(self, local_ifc_repo):
+        url = _local_url(local_ifc_repo["path"])
+        path1, _ = fetch_ifc_path(url)
+        path2, _ = fetch_ifc_path(url)
+        assert path1 == path2
+
+    def test_new_commit_produces_new_path(self, tmp_path):
+        import git as gitpkg
+
+        repo_dir = tmp_path / "repo"
+        repo_dir.mkdir()
+        ifc_bytes = b"IFC4\n"
+        (repo_dir / "model.ifc").write_bytes(ifc_bytes)
+
+        repo = gitpkg.Repo.init(str(repo_dir))
+        with repo.config_writer() as cw:
+            cw.set_value("user", "name", "Test")
+            cw.set_value("user", "email", "t@t.com")
+        repo.index.add(["model.ifc"])
+        repo.index.commit("first")
+
+        url = _local_url(str(repo_dir), ref="HEAD")
+        path1, _ = fetch_ifc_path(url)
+
+        (repo_dir / "model.ifc").write_bytes(b"IFC4\nUPDATED\n")
+        repo.index.add(["model.ifc"])
+        repo.index.commit("second")
+
+        path2, _ = fetch_ifc_path(url)
+        assert path1 != path2
+        assert path2.read_bytes() == b"IFC4\nUPDATED\n"

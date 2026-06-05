@@ -157,9 +157,53 @@ def fetch_ifc_bytes(ifc_url: IfcUrl, token: str | None = None) -> bytes:
     return data
 
 
+def fetch_ifc_path(ifc_url: IfcUrl, token: str | None = None) -> tuple[Path, bool]:
+    """Return ``(path, is_stale)`` for the IFC file addressed by *ifc_url*.
+
+    The file is written to a stable, content-addressed location:
+
+        ``<cache_dir>/<commit-hexsha>/<basename>``
+
+    where ``<cache_dir>`` is the per-URL directory used by the bare cache
+    clone.  Because the path is keyed on the immutable commit hexsha, the
+    file is never rewritten once present — callers may hold the path across
+    calls without it changing under them.
+
+    For mutable refs (branches, HEAD) the remote fetch runs first (as in
+    :func:`fetch_ifc`), and the returned path reflects the latest commit;
+    older materialised files are left in place until the parent cache entry
+    is evicted by LRU.
+
+    *is_stale* has the same semantics as in :func:`fetch_ifc`.
+
+    :param ifc_url: A parsed :class:`IfcUrl`.
+    :param token: Optional bearer token for HTTPS authentication.
+    :raises ImportError: If GitPython is not installed.
+    :raises ValueError: If ``ifc_url.path`` is unset, the repo cannot be
+        reached, or the file is not found at the specified ref.
+    """
+    hexsha, data, is_stale = fetch_ifc(ifc_url, token=token)
+    path = _materialise(_cache_dir_for(ifc_url.git_remote_url()), hexsha, ifc_url.path, data)
+    return path, is_stale
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _materialise(base_dir: Path, hexsha: str, file_path: str, data: bytes) -> Path:
+    """Write *data* to ``<base_dir>/<hexsha>/<basename>`` and return the path.
+
+    The file is skipped if it already exists — the hexsha guarantees content
+    identity so rewriting is unnecessary.
+    """
+    dest_dir = base_dir / hexsha
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / Path(file_path).name
+    if not dest.exists():
+        dest.write_bytes(data)
+    return dest
 
 
 def _fetch_all_refs(repo: "git.Repo", remote_url: str, token: str | None) -> None:
