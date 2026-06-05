@@ -17,9 +17,10 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with IFC URL.  If not, see <http://www.gnu.org/licenses/>.
 
+from ifcurl.checkout import get_checkout
 from ifcurl.discover import find_local_repos
 from ifcurl.git import fetch_ifc, fetch_ifc_bytes, fetch_ifc_path, get_genesis_commit
 from ifcurl.url import IfcUrl
 
 __version__ = "0.0.0"
-__all__ = ["IfcUrl", "fetch_ifc", "fetch_ifc_bytes", "fetch_ifc_path", "get_genesis_commit", "find_local_repos"]
+__all__ = ["IfcUrl", "fetch_ifc", "fetch_ifc_bytes", "fetch_ifc_path", "get_genesis_commit", "find_local_repos", "get_checkout"]
