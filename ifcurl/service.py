@@ -54,6 +54,7 @@ from pydantic import BaseModel
 from ifcurl.auth import get_token_for_host
 from ifcurl.bcf_api import router as bcf_router
 from ifcurl.documents_api import router as documents_router
+from ifcurl.foundation_api import router as foundation_router
 from ifcurl.git import diff_text as git_diff_text
 from ifcurl.git import fetch_ifc
 from ifcurl.render_service import _sandboxed_clash, _sandboxed_diff, _sandboxed_pipeline, _sandboxed_query, _sandboxed_select
@@ -212,6 +213,7 @@ app = FastAPI(
 )
 app.include_router(bcf_router)
 app.include_router(documents_router)
+app.include_router(foundation_router)
 
 # ---------------------------------------------------------------------------
 # Rate limiting (in-process, per client IP, sliding window)
