@@ -50,6 +50,11 @@ def _zip_read(data: bytes, name: str) -> str:
         return zf.read(name).decode()
 
 
+def _zip_read_bytes(data: bytes, name: str) -> bytes:
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        return zf.read(name)
+
+
 # ---------------------------------------------------------------------------
 # build_bcf unit tests
 # ---------------------------------------------------------------------------
@@ -140,6 +145,25 @@ class TestBuildBcf:
         markup = next(n for n in _zip_names(data) if n.endswith("markup.bcf"))
         content = _zip_read(data, markup)
         assert "<Description>" not in content
+
+    def test_snapshot_written_to_zip_and_referenced_in_markup(self):
+        cam = (0.0, 0.0, 5.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0)
+        png_bytes = b"\x89PNG\r\n\x1a\nfake"
+        data = build_bcf(camera=cam, fov=60.0, snapshot=png_bytes)
+        names = _zip_names(data)
+        snap_file = next((n for n in names if n.endswith("snapshot.png")), None)
+        assert snap_file is not None
+        assert _zip_read_bytes(data, snap_file) == png_bytes
+        markup = next(n for n in names if n.endswith("markup.bcf"))
+        assert "snapshot.png" in _zip_read(data, markup)
+
+    def test_no_snapshot_when_not_provided(self):
+        cam = (0.0, 0.0, 5.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0)
+        data = build_bcf(camera=cam, fov=60.0)
+        names = _zip_names(data)
+        assert not any(n.endswith("snapshot.png") for n in names)
+        markup = next(n for n in names if n.endswith("markup.bcf"))
+        assert "snapshot.png" not in _zip_read(data, markup)
 
 
 # ---------------------------------------------------------------------------

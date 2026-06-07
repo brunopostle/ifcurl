@@ -457,6 +457,8 @@ class BcfRequest(BaseModel):
     title: str = "IFC View"
     comment: str = ""
     token: str | None = None
+    snapshot: str | None = None
+    """Base64-encoded PNG snapshot captured client-side."""
 
 
 class DiffRequest(BaseModel):
@@ -673,6 +675,13 @@ def bcf_export(request: BcfRequest) -> Response:
                 status_code=422, detail=f"Invalid selector: {exc}"
             ) from exc
 
+    snapshot_bytes: bytes | None = None
+    if request.snapshot:
+        try:
+            snapshot_bytes = base64.b64decode(request.snapshot)
+        except Exception:
+            pass
+
     bcf_bytes = build_bcf(
         camera=ifc_url.camera,
         fov=ifc_url.fov,
@@ -683,6 +692,7 @@ def bcf_export(request: BcfRequest) -> Response:
         title=request.title,
         comment=request.comment,
         description=request.url,
+        snapshot=snapshot_bytes,
     )
     return Response(
         content=bcf_bytes,

@@ -116,6 +116,7 @@ def _markup_xml(
     author: str,
     now: str,
     description: str = "",
+    has_snapshot: bool = False,
 ) -> bytes:
     root = ET.Element("Markup")
     topic = ET.SubElement(
@@ -129,6 +130,8 @@ def _markup_xml(
     if vp_guid:
         vps = ET.SubElement(topic, "Viewpoints", Guid=vp_guid)
         ET.SubElement(vps, "Viewpoint").text = "viewpoint.bcfv"
+        if has_snapshot:
+            ET.SubElement(vps, "Snapshot").text = "snapshot.png"
 
     if comment and comment.strip():
         c = ET.SubElement(root, "Comment", Guid=str(uuid.uuid4()))
@@ -155,6 +158,7 @@ def build_bcf(
     comment: str = "",
     description: str = "",
     author: str = "anonymous",
+    snapshot: bytes | None = None,
 ) -> bytes:
     """Build a BCF 2.1 zip archive and return the raw bytes.
 
@@ -179,7 +183,10 @@ def build_bcf(
         zf.writestr("bcf.version", _VERSION_XML)
         zf.writestr(
             f"{topic_guid}/markup.bcf",
-            _markup_xml(topic_guid, vp_guid, title, comment, author, now, description),
+            _markup_xml(
+                topic_guid, vp_guid, title, comment, author, now, description,
+                has_snapshot=snapshot is not None,
+            ),
         )
         if vp_guid is not None:
             zf.writestr(
@@ -188,6 +195,8 @@ def build_bcf(
                     vp_guid, camera, fov, scale, clips or [], guids, visibility
                 ),
             )
+        if vp_guid is not None and snapshot is not None:
+            zf.writestr(f"{topic_guid}/snapshot.png", snapshot)
     return buf.getvalue()
 
 

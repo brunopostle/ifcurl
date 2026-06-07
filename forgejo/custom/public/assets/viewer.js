@@ -835,11 +835,17 @@ async function generateBcf(title, comment) {
   const visibility = qs.get("visibility") || "highlight";
 
   if (selector) {
+    let snapshotB64 = null;
+    if (rendererCanvas) {
+      try {
+        snapshotB64 = rendererCanvas.toDataURL("image/png").split(",")[1];
+      } catch (_) { /* context lost or cross-origin — skip */ }
+    }
     try {
       const resp = await fetch("/bcf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: src, title: title || "IFC View", comment }),
+        body: JSON.stringify({ url: src, title: title || "IFC View", comment, snapshot: snapshotB64 }),
       });
       if (!resp.ok) {
         const detail = await resp.text().catch(() => resp.statusText);
