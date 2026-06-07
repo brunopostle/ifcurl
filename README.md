@@ -290,6 +290,29 @@ For private repositories, configure tokens per host in `~/.config/ifcurl/tokens.
 { "hosts": { "github.com": "ghp_…", "gitlab.example.com": "glpat_…" } }
 ```
 
+**systemd deployment:** the service user typically has no home directory (`ProtectHome=yes`), so `~/.config` is inaccessible. The recommended approach for a server is a dedicated read-only Forgejo account (e.g. `ifcurl-bot`) added as a member of any private repositories that should be renderable. Generate an API token for that account and configure it as follows.
+
+Set `XDG_CONFIG_HOME` to a readable path in the environment file (e.g. `/etc/ifcurl/env`) and ensure the file is readable by the service user:
+
+```
+XDG_CONFIG_HOME=/etc/ifcurl
+```
+
+```bash
+chown root:ifcurl /etc/ifcurl/env
+chmod 640 /etc/ifcurl/env
+```
+
+Then create `/etc/ifcurl/ifcurl/tokens.json` with the service account token:
+
+```bash
+mkdir -p /etc/ifcurl/ifcurl
+echo '{"hosts":{"git.example.com":"<service-account-token>"}}' > /etc/ifcurl/ifcurl/tokens.json
+chown root:ifcurl /etc/ifcurl/ifcurl/tokens.json
+chmod 640 /etc/ifcurl/ifcurl/tokens.json
+systemctl restart ifcurl-api
+```
+
 ---
 
 ## Development
