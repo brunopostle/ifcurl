@@ -25,6 +25,8 @@ service = ["pyvista", "numpy", "Pillow", "fastapi", "uvicorn[standard]", "python
 
 [project.scripts]
 ifcurl = "ifcurl.__main__:main"
+ifcurl-open = "ifcurl.open:main"
+ifcurl-register = "ifcurl.register:main"
 
 [project.urls]
 Homepage = "https://github.com/brunopostle/ifcurl"
@@ -36,6 +38,7 @@ exclude = ["test*"]
 
 [tool.setuptools.package-data]
 ifcurl = ["py.typed"]
+"ifcurl.data" = ["*.desktop", "*.plist"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

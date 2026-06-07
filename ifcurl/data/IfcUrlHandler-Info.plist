@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>net.postle.ifcurl.UrlHandler</string>
+    <key>CFBundleName</key>
+    <string>IfcUrlHandler</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleExecutable</key>
+    <string>ifcurl-open-shim</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>IFC URL</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>ifc</string>
+            </array>
+        </dict>
+    </array>
+    <key>LSBackgroundOnly</key>
+    <true/>
+</dict>
+</plist>

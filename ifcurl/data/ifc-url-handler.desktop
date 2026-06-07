@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=IFC URL Handler
+Comment=Open ifc:// URLs in the configured viewer
+Exec=IFCURL_OPEN_EXEC %u
+Type=Application
+NoDisplay=true
+MimeType=x-scheme-handler/ifc;
