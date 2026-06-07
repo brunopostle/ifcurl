@@ -760,12 +760,20 @@ async function applyQuery(srcUrl, queryPath) {
   queryTbody.innerHTML = "";
   for (const [guid, value] of entries) {
     const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
     const tdGuid = document.createElement("td");
     tdGuid.textContent = guid;
     const tdVal = document.createElement("td");
     tdVal.textContent = value;
     tr.appendChild(tdGuid);
     tr.appendChild(tdVal);
+    tr.addEventListener("click", async () => {
+      if (!components || !loadedModel) return;
+      const localIds = (await loadedModel.getLocalIdsByGuids([guid])).filter(id => id !== null);
+      if (!localIds.length) return;
+      const items = { [loadedModel.modelId]: new Set(localIds) };
+      await applyFragmentStyle(components, items, new THREE.Color(0xff8800), 1);
+    });
     queryTbody.appendChild(tr);
   }
   queryPanel.style.display = "";
@@ -1088,13 +1096,15 @@ async function populateMetaPanel(components) {
   // --- Render ---
   const html = [];
 
+  const hesc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
   if (types.length) {
     html.push("<h3>Types</h3>");
     for (const { name, count } of types) {
       html.push(
         `<div class="meta-row">` +
-        `<span class="meta-name">${name}</span>` +
-        `<span class="meta-count">${count}</span>` +
+        `<span class="meta-name">${hesc(name)}</span>` +
+        `<span class="meta-count">${hesc(count)}</span>` +
         `</div>`
       );
     }
@@ -1109,8 +1119,8 @@ async function populateMetaPanel(components) {
     );
     for (const name of storeyNames) {
       html.push(
-        `<div class="meta-row storey-row" data-storey="${name.replace(/"/g, "&quot;")}">` +
-        `<span class="meta-name">${name}</span>` +
+        `<div class="meta-row storey-row" data-storey="${hesc(name)}">` +
+        `<span class="meta-name">${hesc(name)}</span>` +
         `</div>`
       );
     }

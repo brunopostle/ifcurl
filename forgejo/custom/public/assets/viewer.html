@@ -170,7 +170,8 @@
 (function() {
   try {
     var snap = sessionStorage.getItem("viewerSnapshot");
-    if (!snap || !new URLSearchParams(location.search).get("url")) return;
+    if (!snap || !snap.startsWith("data:image/jpeg;base64,")) return;
+    if (!new URLSearchParams(location.search).get("url")) return;
     var el = document.createElement("div");
     el.id = "snapshot-overlay";
     el.style.backgroundImage = "url(" + snap + ")";

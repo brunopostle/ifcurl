@@ -47,6 +47,7 @@ from fastapi.responses import JSONResponse, Response
 
 from ifcurl.bcf import bcf_viewpoint_to_ifc_url, ifc_url_to_bcf_viewpoint
 from ifcurl.url import IfcUrl
+from ifcurl.auth import get_token_for_host
 
 # ---------------------------------------------------------------------------
 # Config
@@ -356,16 +357,27 @@ def get_viewpoint(owner: str, repo: str, tguid: str, vpguid: str, request: Reque
 
 @router.get("/projects/{owner}/{repo}/topics/{tguid}/viewpoints/{vpguid}/snapshot")
 def get_snapshot(owner: str, repo: str, tguid: str, vpguid: str, request: Request) -> Response:
+    from ifcurl.service import _ssrf_check
     auth = _auth(request)
     issue = _find_issue(owner, repo, tguid, auth)
     comment = _find_comment(owner, repo, vpguid, auth)
     ifc_url_str = _first_ifc_url(comment.get("body"))
     if not ifc_url_str:
         raise HTTPException(status_code=404, detail="No ifc:// URL in viewpoint comment")
-    headers = {}
-    if auth:
-        headers["Authorization"] = auth
-    r = httpx.get(f"{_PREVIEW_URL}/preview", params={"url": ifc_url_str}, headers=headers, timeout=120)
+    # Validate the stored ifc:// URL against SSRF rules before fetching.
+    # The caller's bearer token must NOT be forwarded to the preview service —
+    # it would then be sent to the git host named in the comment, which may be
+    # attacker-controlled. Use the server-side token for the ifc:// host instead.
+    try:
+        ifc_url = IfcUrl.parse(ifc_url_str)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Invalid ifc:// URL in viewpoint: {exc}") from exc
+    _ssrf_check(ifc_url)
+    server_token = get_token_for_host(ifc_url.host) if ifc_url.host else None
+    params: dict = {"url": ifc_url_str}
+    if server_token:
+        params["token"] = server_token
+    r = httpx.get(f"{_PREVIEW_URL}/preview", params=params, timeout=120)
     if r.status_code != 200:
         raise HTTPException(status_code=r.status_code, detail="Preview service error")
     return Response(content=r.content, media_type="image/png")

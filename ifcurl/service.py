@@ -41,6 +41,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import socket
 import threading
 import time
 from collections import OrderedDict
@@ -263,18 +264,34 @@ def configure_allowed_hosts(hosts: set[str] | None) -> None:
 
 
 def _is_private_ip(host: str) -> bool:
-    """Return True if *host* is a literal private/loopback/link-local IP."""
+    """Return True if *host* resolves to a private/loopback/link-local address.
+
+    Accepts both literal IP strings and hostnames.  For hostnames, all resolved
+    addresses are checked — if any resolve to a private address the function
+    returns True, blocking DNS-rebinding / internal-hostname SSRF attacks.
+    """
     bare = host.split(":")[0].strip("[]")  # strip port and IPv6 brackets
     try:
+        # Fast path: host is already a literal IP address.
         addr = ipaddress.ip_address(bare)
-        return (
-            addr.is_loopback
-            or addr.is_link_local
-            or addr.is_private
-            or addr.is_reserved
-        )
+        return addr.is_loopback or addr.is_link_local or addr.is_private or addr.is_reserved
     except ValueError:
-        return False
+        pass
+    # Slow path: resolve the hostname and check all returned addresses.
+    try:
+        results = socket.getaddrinfo(bare, None, proto=socket.IPPROTO_TCP)
+    except OSError:
+        # Resolution failed — treat as private to fail safe.
+        return True
+    for _family, _type, _proto, _canonname, sockaddr in results:
+        ip_str = sockaddr[0]
+        try:
+            addr = ipaddress.ip_address(ip_str)
+            if addr.is_loopback or addr.is_link_local or addr.is_private or addr.is_reserved:
+                return True
+        except ValueError:
+            return True
+    return False
 
 
 def _ssrf_check(ifc_url: IfcUrl) -> None:
