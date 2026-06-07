@@ -41,11 +41,15 @@ Auth is forwarded verbatim so Forgejo enforces per-user permissions.
 from __future__ import annotations
 
 import base64
+import json
+import os
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
 
-from ifcurl.bcf_api import _auth, _fget
+from ifcurl.bcf_api import _auth, _fget, _FORGEJO_URL
 
 router = APIRouter(prefix="/documents/1.0")
 
@@ -177,3 +181,214 @@ def document_versions(request: Request, body: dict = Body(default={})) -> JSONRe
             result.append({"document_id": doc_id, **v})
 
     return JSONResponse(result)
+
+
+# ---------------------------------------------------------------------------
+# POST /documents/1.0/select-documents  +  GET /select-documents/ui
+# ---------------------------------------------------------------------------
+
+class _Callback(BaseModel):
+    url: str
+    expires_in: int = 3600
+
+
+class SelectDocumentsRequest(BaseModel):
+    callback: _Callback
+
+
+@router.post("/select-documents")
+def select_documents(body: SelectDocumentsRequest, request: Request) -> JSONResponse:
+    """Return a URL for the document-picker UI.
+
+    Implements the OpenCDE Documents API select-documents flow.  The caller
+    redirects the user's browser to ``select_documents_url``; the picker lets
+    the user choose an IFC file from a Forgejo repository, then redirects back
+    to ``callback.url`` with ``document_ids[]`` query parameters appended.
+    """
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "localhost")
+    proto = request.headers.get("x-forwarded-proto", "https")
+    base = f"{proto}://{host}"
+    picker_url = (
+        f"{base}/documents/1.0/select-documents/ui"
+        f"?callback_url={quote(body.callback.url, safe='')}"
+    )
+    return JSONResponse({"select_documents_url": picker_url})
+
+
+@router.get("/select-documents/ui", response_class=HTMLResponse)
+def select_documents_ui(callback_url: str) -> HTMLResponse:
+    """Serve the document-picker HTML page.
+
+    The page uses the Forgejo REST API to let the user browse repositories and
+    select an IFC file.  On selection it redirects to ``callback_url`` with
+    ``document_ids[]`` appended.
+    """
+    if not callback_url:
+        raise HTTPException(status_code=400, detail="callback_url is required")
+    return HTMLResponse(_picker_html(callback_url))
+
+
+# ---------------------------------------------------------------------------
+# Picker HTML (self-contained, no external dependencies)
+# ---------------------------------------------------------------------------
+
+_PICKER_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Select IFC Document</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h2 { margin-top: 0; }
+    select { display: block; width: 100%; padding: 0.4em; font-size: 1em; margin-bottom: 0.8em; }
+    #breadcrumb { font-size: 0.9em; margin-bottom: 0.4em; color: #555; }
+    #breadcrumb span { cursor: pointer; color: #0070f3; text-decoration: underline; }
+    ul { list-style: none; padding: 0; margin: 0; border: 1px solid #ddd; border-radius: 4px; }
+    li { padding: 0.4em 0.7em; cursor: pointer; border-bottom: 1px solid #eee; font-size: 0.95em; }
+    li:last-child { border-bottom: none; }
+    li:hover { background: #f5f5f5; }
+    li.up { color: #555; }
+    li.dir::before { content: "\\1F4C1  "; }
+    li.ifc { color: #005a9c; font-weight: 500; }
+    li.ifc::before { content: "\\1F4C4  "; }
+    #status { color: #666; font-size: 0.9em; min-height: 1.4em; }
+    #error { color: #c00; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <h2>Select IFC Document</h2>
+  <p id="status">Loading repositories…</p>
+  <p id="error"></p>
+  <select id="repo-select" style="display:none" onchange="onRepoChange()">
+    <option value="">— Select a repository —</option>
+  </select>
+  <div id="breadcrumb"></div>
+  <ul id="file-list"></ul>
+<script>
+const CALLBACK_URL = __CALLBACK_URL__;
+const FORGEJO_BASE = __FORGEJO_BASE__;
+let currentOwner = '', currentRepo = '', currentPath = '';
+
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+function setError(msg) { document.getElementById('error').textContent = msg; }
+
+async function apiFetch(path) {
+  const r = await fetch(FORGEJO_BASE + path, {credentials: 'include'});
+  if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+  return r.json();
+}
+
+async function loadRepos() {
+  try {
+    const data = await apiFetch('/api/v1/repos/search?limit=50&sort=updated');
+    const sel = document.getElementById('repo-select');
+    for (const repo of (data.data || [])) {
+      const opt = document.createElement('option');
+      opt.value = repo.full_name;
+      opt.textContent = repo.full_name;
+      sel.appendChild(opt);
+    }
+    sel.style.display = '';
+    setStatus('Select a repository.');
+  } catch(e) {
+    setError('Failed to load repositories: ' + e.message);
+  }
+}
+
+function onRepoChange() {
+  const val = document.getElementById('repo-select').value;
+  if (!val) return;
+  [currentOwner, currentRepo] = val.split('/', 2);
+  browseDir('');
+}
+
+async function browseDir(path) {
+  currentPath = path;
+  renderBreadcrumb(path);
+  setStatus('Loading…');
+  try {
+    const items = await apiFetch(
+      '/api/v1/repos/' + currentOwner + '/' + currentRepo + '/contents/' + path
+    );
+    renderItems(Array.isArray(items) ? items : []);
+    setStatus('');
+  } catch(e) {
+    setError('Failed to load directory: ' + e.message);
+    setStatus('');
+  }
+}
+
+function renderItems(items) {
+  const list = document.getElementById('file-list');
+  list.innerHTML = '';
+  if (currentPath) {
+    const parent = currentPath.includes('/')
+      ? currentPath.substring(0, currentPath.lastIndexOf('/'))
+      : '';
+    addListItem(list, '⬆ ..', 'up', () => browseDir(parent));
+  }
+  const dirs = items.filter(i => i.type === 'dir').sort((a, b) => a.name.localeCompare(b.name));
+  const ifcs = items.filter(i => i.type === 'file' && i.name.toLowerCase().endsWith('.ifc'))
+                    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const d of dirs) addListItem(list, d.name, 'dir', () => browseDir(d.path));
+  for (const f of ifcs) addListItem(list, f.name, 'ifc', () => selectFile(f.path));
+  if (!dirs.length && !ifcs.length && currentPath) {
+    addListItem(list, '(no IFC files in this directory)', '', null);
+  }
+}
+
+function addListItem(list, text, cls, onclick) {
+  const li = document.createElement('li');
+  if (cls) li.className = cls;
+  li.textContent = text;
+  if (onclick) li.onclick = onclick;
+  else li.style.cursor = 'default';
+  list.appendChild(li);
+}
+
+function renderBreadcrumb(path) {
+  const bc = document.getElementById('breadcrumb');
+  const parts = path ? path.split('/') : [];
+  const spans = ['<span onclick="browseDir(\\'\\')">' + escHtml(currentRepo) + '</span>'];
+  let built = '';
+  for (const p of parts) {
+    built = built ? built + '/' + p : p;
+    const captured = built;
+    spans.push('<span onclick="browseDir(\\'' + captured + '\\')">' + escHtml(p) + '</span>');
+  }
+  bc.innerHTML = spans.join(' / ');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function selectFile(path) {
+  const raw = currentOwner + '/' + currentRepo + '/' + path;
+  // base64url encode (matches Python encode_document_id)
+  const b64 = btoa(unescape(encodeURIComponent(raw)))
+    .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+  const sep = CALLBACK_URL.includes('?') ? '&' : '?';
+  window.location.href = CALLBACK_URL + sep + 'document_ids[]=' + encodeURIComponent(b64);
+}
+
+loadRepos();
+</script>
+</body>
+</html>
+"""
+
+
+def _picker_html(callback_url: str) -> str:
+    def _js(v: str) -> str:
+        # json.dumps is valid JSON but </script> inside <script> breaks HTML
+        # parsing; <\/ is a legal JSON escape that browsers handle correctly.
+        return json.dumps(v).replace("</", "<\\/")
+
+    return (
+        _PICKER_TEMPLATE
+        .replace("__CALLBACK_URL__", _js(callback_url))
+        .replace("__FORGEJO_BASE__", _js(_FORGEJO_URL))
+    )
