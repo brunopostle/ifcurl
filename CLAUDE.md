@@ -138,6 +138,8 @@ systemctl is-active ifcurl-api.service forgejo
 
 **18 — Click-to-inspect.** Click a 3D element. Properties panel shows IFC type, name, GlobalId. Copy button copies GUID.
 
+**19 — OpenCDE document picker (select-documents).** With `IFCURL_OAUTH2_CLIENT_ID` and `IFCURL_OAUTH2_CLIENT_SECRET` set, POST to `http://localhost:8000/documents/1.0/select-documents` with body `{"callback": {"url": "http://localhost:9999/cb"}}`. The response should contain a `select_documents_url`. Open that URL in a browser — the picker should list Forgejo repositories. Select one, navigate directories, click an `.ifc` file — the browser should redirect to `http://localhost:9999/cb?document_ids[]=<base64url-id>`.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 

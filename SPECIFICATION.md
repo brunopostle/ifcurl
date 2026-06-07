@@ -426,7 +426,9 @@ is not used in `ifc://` URLs.
    configuration obtained from step 1. Credentials are never embedded in the
    `ifc://` URL. Viewer implementations served from the same browser session as
    the CDE web interface may share the existing session cookie, avoiding an
-   explicit OAuth2 flow for authenticated users.
+   explicit OAuth2 flow for authenticated users. The `ifcurl` preview service
+   exposes OAuth2 proxy routes at `/foundation/1.1/oauth2/` that handle
+   credential injection server-side (see `README.md`).
 
 3. **Resolve document version** — `POST <documents_api_base>/document-versions`
    with body `{"document_ids": ["<document_id>"]}`. If `version_index` is

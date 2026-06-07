@@ -114,7 +114,12 @@ ifcurl serve --host 0.0.0.0 --port 9000 --allowed-hosts git.example.com
 | `GET /select?url=ifc://…` | Resolve a complex selector server-side; returns JSON list of GlobalIds |
 | `GET /render_diff?base=ifc://…&head=ifc://…` | Render a colour-coded diff PNG (added green, removed red) |
 | `GET /foundation/versions` | OpenCDE Foundation API discovery — lists BCF and Documents API endpoints (proxy at `/foundation/` on the Forgejo hostname) |
+| `GET /foundation/1.1/oauth2/auth_url` | Return Forgejo authorization URL to begin OAuth2 code flow (requires `IFCURL_OAUTH2_CLIENT_ID`) |
+| `POST /foundation/1.1/oauth2/token` | Exchange auth code for access + refresh token pair; client credentials injected server-side |
+| `POST /foundation/1.1/oauth2/token_refresh` | Exchange refresh token for new token pair |
 | `POST /documents/1.0/document-versions` | OpenCDE Documents API — resolve document_ids to versioned download URLs (proxied at `/documents/`) |
+| `POST /documents/1.0/select-documents` | Return a picker UI URL; caller redirects the user's browser to it |
+| `GET /documents/1.0/select-documents/ui` | Self-contained document-picker page — user browses Forgejo repos, selects an IFC file, redirected back to `callback_url?document_ids[]=<id>` |
 | `GET /bcf/3.0/projects` | BCF 3.0 — list repositories as BCF projects |
 | `GET/POST /bcf/3.0/projects/{owner}/{repo}/topics` | BCF 3.0 — list or create topics (Forgejo issues) |
 | `GET/PUT /bcf/3.0/projects/{owner}/{repo}/topics/{guid}` | BCF 3.0 — get or update a topic |
@@ -131,6 +136,8 @@ The BCF API forwards the client's `Authorization: Bearer` header to Forgejo's RE
 |---|---|---|
 | `IFCURL_FORGEJO_URL` | `http://localhost:3000` | Forgejo base URL for BCF API calls |
 | `IFCURL_PREVIEW_URL` | `http://localhost:8000` | Preview service URL for BCF snapshot endpoint |
+| `IFCURL_OAUTH2_CLIENT_ID` | (none) | Forgejo OAuth2 app client ID — required for Foundation API OAuth2 proxy routes |
+| `IFCURL_OAUTH2_CLIENT_SECRET` | (none) | Forgejo OAuth2 app client secret |
 
 **Proxy configuration** — add to nginx or Caddy on the Forgejo hostname:
 
@@ -217,6 +224,23 @@ ifcurl render "ifc://..." -o output.png
 ifcurl cache list           # show cached repos with size and last-access time
 ifcurl cache prune --max 5  # remove oldest repos until cache is under 5 GB
 ifcurl cache clear          # remove all cached repos
+
+# Register ifc:// as an OS-level protocol handler (Linux, macOS, Windows)
+ifcurl-register
+ifcurl-register --unregister   # remove registration
+```
+
+`ifcurl-register` writes the platform-appropriate handler (`.desktop` + xdg-mime
+on Linux, an app bundle + Launch Services on macOS, per-user registry keys on
+Windows) and points it at `ifcurl-open`. When the OS invokes the handler,
+`ifcurl-open` reads `~/.config/ifcurl/config.toml` and forwards the URL to the
+configured viewer:
+
+```toml
+[handler]
+default_viewer = "bonsai"   # or "ifcviewer"
+# Or a fully custom command:
+# command = ["myviewer", "--open", "{url}"]
 ```
 
 Use as a library:
@@ -289,12 +313,12 @@ node --test tests/test_viewer_url.mjs
 | 1 — Python core | ✓ done | URL parsing, git fetch, render |
 | 2 — Preview service | ✓ done | HTTP service with caching |
 | 3 — Forgejo integration | ✓ done | Viewer, JS markdown extension |
-| 4 — Bonsai integration | planned | Protocol handler + "Copy view URL" |
+| 4 — OS protocol handler | ✓ done | `ifcurl-register` + `ifcurl-open`: registers `ifc://` on Linux, macOS, Windows; dispatches to Bonsai or any viewer |
 | 5 — IFC Viewer integration | planned | Plugin for the open-source IFC Viewer |
 | 6 — Federation | planned | `IFCDOCUMENTREFERENCE` cross-repo links |
-| 7 — OpenCDE Foundation API | planned | Discovery endpoint so OpenCDE clients can find the server |
-| 8 — OpenCDE BCF API | planned | BCF 3.0 REST API in Forgejo — connect Revit, Navisworks, Solibri directly |
-| 9 — OpenCDE Documents API | planned | Expose IFC files in git repos as OpenCDE documents |
+| 7 — OpenCDE Foundation API | ✓ done | Discovery endpoint + OAuth2 proxy (Foundation API 1.1) |
+| 8 — OpenCDE BCF API | ✓ done | BCF 3.0 REST API — connect Revit, Navisworks, Solibri directly |
+| 9 — OpenCDE Documents API | ✓ done | Document versions + select-documents picker |
 
 Development tasks are tracked with [beads](https://github.com/brunopostle/beads): `bd ready`.
 
