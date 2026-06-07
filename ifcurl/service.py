@@ -52,7 +52,6 @@ from platformdirs import user_cache_dir
 from pydantic import BaseModel
 
 from ifcurl.auth import get_token_for_host
-from ifcurl.bcf import build_bcf
 from ifcurl.bcf_api import router as bcf_router
 from ifcurl.documents_api import router as documents_router
 from ifcurl.git import diff_text as git_diff_text
@@ -452,15 +451,6 @@ class ClashRequest(BaseModel):
     token: str | None = None
 
 
-class BcfRequest(BaseModel):
-    url: str
-    title: str = "IFC View"
-    comment: str = ""
-    token: str | None = None
-    snapshot: str | None = None
-    """Base64-encoded PNG snapshot captured client-side."""
-
-
 class DiffRequest(BaseModel):
     base: str
     """ifc:// URL for the base (older) commit."""
@@ -619,86 +609,6 @@ def preview(request: PreviewRequest) -> Response:
                 **extra_headers,
             },
         )
-
-
-@app.post("/bcf")
-def bcf_export(request: BcfRequest) -> Response:
-    """Generate a BCF 2.1 zip from an ifc:// URL viewpoint.
-
-    Returns ``application/octet-stream`` with a ``.bcf`` zip file containing
-    the camera, clipping planes, and (when a selector is present) the resolved
-    component GUID selection.
-    """
-    try:
-        ifc_url = IfcUrl.parse(request.url)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if ifc_url.path is None:
-        raise HTTPException(status_code=400, detail="URL has no 'path' parameter")
-
-    _ssrf_check(ifc_url)
-
-    # Resolve selector → component GUIDs when present.
-    guids: list[str] | None = None
-    if ifc_url.selector:
-        token = request.token
-        if token is None and ifc_url.host:
-            token = get_token_for_host(ifc_url.host)
-        try:
-            hexsha, ifc_bytes, _ = fetch_ifc(ifc_url, token=token)
-        except (ImportError, ValueError) as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-        _check_ifc_size(ifc_bytes)
-
-        cached = _t2_get(hexsha, ifc_url.path)
-        ifc_bytes = cached if cached is not None else ifc_bytes
-        if cached is None:
-            _t2_put(hexsha, ifc_url.path, ifc_bytes)
-
-        try:
-            if _RENDER_SOCKET:
-                guids = _select_via_socket(ifc_bytes, ifc_url.selector)
-            else:
-                guids = run_sandboxed(_sandboxed_select, ifc_bytes, ifc_url.selector)
-        except SandboxCrashError as exc:
-            raise HTTPException(
-                status_code=422, detail=f"IFC parse/select crashed: {exc}"
-            ) from exc
-        except SandboxTimeoutError as exc:
-            raise HTTPException(
-                status_code=503, detail=f"Select timed out: {exc}"
-            ) from exc
-        except Exception as exc:
-            raise HTTPException(
-                status_code=422, detail=f"Invalid selector: {exc}"
-            ) from exc
-
-    snapshot_bytes: bytes | None = None
-    if request.snapshot:
-        try:
-            snapshot_bytes = base64.b64decode(request.snapshot)
-        except Exception:
-            pass
-
-    bcf_bytes = build_bcf(
-        camera=ifc_url.camera,
-        fov=ifc_url.fov,
-        scale=ifc_url.scale,
-        clips=ifc_url.clips or None,
-        guids=guids,
-        visibility=ifc_url.visibility,
-        title=request.title,
-        comment=request.comment,
-        description=request.url,
-        snapshot=snapshot_bytes,
-    )
-    return Response(
-        content=bcf_bytes,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": 'attachment; filename="view.bcf"'},
-    )
 
 
 @app.get("/select")

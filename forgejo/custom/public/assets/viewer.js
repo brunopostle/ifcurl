@@ -44,6 +44,7 @@ let threeCamera    = null;
 let activeClipper  = null;
 let loadedModel    = null;
 let rendererCanvas = null;
+let currentGuids   = [];
 // Raw HTTP URL of the loaded IFC file, captured once at model load time.
 // Used to decide whether a loadUrl call needs a full reload or an in-place update.
 let modelRawUrl = null;
@@ -187,9 +188,10 @@ async function applyViewChanges(newUrl) {
     const hider = components.get(OBC.Hider);
     await frags.resetHighlight();
     await hider.set(true);
+    currentGuids = [];
     if (newSelector) {
       statusEl.textContent = "Applying selector…";
-      await applySelector(components, loadedModel, newSelector, newUrl, newVisibility);
+      currentGuids = await applySelector(components, loadedModel, newSelector, newUrl, newVisibility) ?? [];
     }
     await frags.core.update(true);
   }
@@ -653,7 +655,7 @@ async function applyFragmentStyle(components, items, color, opacity) {
 }
 
 async function applySelector(components, model, selectorStr, srcUrl, visibility = "highlight") {
-  if (!selectorStr) return;
+  if (!selectorStr) return [];
 
   const hider = components.get(OBC.Hider);
 
@@ -662,15 +664,22 @@ async function applySelector(components, model, selectorStr, srcUrl, visibility 
     const classifier = components.get(OBC.Classifier);
     await classifier.byCategory();
     const categoryGroups = classifier.list.get("Categories");
-    if (!categoryGroups) return;
+    if (!categoryGroups) return [];
     const matchingCategories = [];
     for (const [cat] of categoryGroups) {
       if (userTypes.some(t => cat === t || cat.startsWith(t)))
         matchingCategories.push(cat);
     }
-    if (!matchingCategories.length) return;
+    if (!matchingCategories.length) return [];
     const matching = await classifier.find({ Categories: matchingCategories });
-    if (!matching || Object.keys(matching).length === 0) return;
+    if (!matching || Object.keys(matching).length === 0) return [];
+
+    // Collect GUIDs before applying visual style.
+    const allLocalIds = Object.values(matching).flatMap(s => [...s]);
+    const resolvedGuids = (await Promise.all(
+      allLocalIds.map(async id => { const item = model.getItem(id); return item ? item.getGuid() : null; })
+    )).filter(Boolean);
+
     if (visibility === "ghost") {
       // Dim non-selected; selected appear normally.
       const allItems = await classifier.find({ Categories: [...categoryGroups.keys()] });
@@ -684,7 +693,7 @@ async function applySelector(components, model, selectorStr, srcUrl, visibility 
       // highlight (default): colour-overlay the selected elements, all others visible.
       await applyFragmentStyle(components, matching, new THREE.Color(0xff8800), 1);
     }
-    return;
+    return resolvedGuids;
   }
 
   // Complex selector: ask the service to resolve it to GUIDs.
@@ -695,18 +704,18 @@ async function applySelector(components, model, selectorStr, srcUrl, visibility 
     if (!resp.ok) {
       const detail = await resp.text().catch(() => resp.statusText);
       statusEl.textContent = `Selector error: ${detail}`;
-      return;
+      return [];
     }
     guids = (await resp.json()).guids ?? [];
   } catch (_) {
     statusEl.textContent = "Complex selector requires the ifcurl service — /select not reachable";
-    return;
+    return [];
   }
 
-  if (!guids.length) return;
+  if (!guids.length) return [];
 
   const localIds = (await model.getLocalIdsByGuids(guids)).filter(id => id !== null);
-  if (!localIds.length) return;
+  if (!localIds.length) return [];
 
   const matchingMap = { [model.modelId]: new Set(localIds) };
   if (visibility === "ghost") {
@@ -720,6 +729,7 @@ async function applySelector(components, model, selectorStr, srcUrl, visibility 
   } else {
     await applyFragmentStyle(components, matchingMap, new THREE.Color(0xff8800), 1);
   }
+  return guids;
 }
 
 // -----------------------------------------------------------------------
@@ -810,11 +820,9 @@ async function applyCameraParam(controls, obcCamera, url) {
 }
 
 // -----------------------------------------------------------------------
-// BCF 2.1 export.
-// With a selector: delegates to POST /bcf so the service resolves component
-// GUIDs server-side.  Fails visibly if the service is unreachable — no
-// silent fallback to a GUIDless file.
-// Without a selector: builds the zip client-side (camera + clips only).
+// BCF 2.1 export — built entirely client-side.
+// GUIDs for active selectors are kept in currentGuids, populated by
+// applySelector() on every model load or selector change.
 // -----------------------------------------------------------------------
 async function generateBcf(title, comment) {
   if (threeCamera) syncCameraUrl(threeCamera);
@@ -833,36 +841,6 @@ async function generateBcf(title, comment) {
     .filter(v => v.length === 6 && !v.some(isNaN));
   const selector   = qs.get("selector") || "";
   const visibility = qs.get("visibility") || "highlight";
-
-  if (selector) {
-    let snapshotB64 = null;
-    if (rendererCanvas) {
-      try {
-        snapshotB64 = rendererCanvas.toDataURL("image/png").split(",")[1];
-      } catch (_) { /* context lost or cross-origin — skip */ }
-    }
-    try {
-      const resp = await fetch("/bcf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: src, title: title || "IFC View", comment, snapshot: snapshotB64 }),
-      });
-      if (!resp.ok) {
-        const detail = await resp.text().catch(() => resp.statusText);
-        statusEl.textContent = `BCF export failed: ${detail}`;
-        return;
-      }
-      const blob = await resp.blob();
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "view.bcf";
-      a.click();
-      URL.revokeObjectURL(a.href);
-    } catch (_) {
-      statusEl.textContent = "BCF export requires the ifcurl service — /bcf not reachable";
-    }
-    return;
-  }
 
   // Capture a snapshot of the current view for the BCF zip.
   let snapshotB64 = null;
@@ -913,12 +891,23 @@ async function generateBcf(title, comment) {
         `<ClippingPlane>${xyz("Location",cx,cy,cz)}${xyz("Direction",nx,ny,nz)}</ClippingPlane>`
       ).join("\n    ")}
   </ClippingPlanes>` : "";
-    // Reflect visibility mode: isolate → hide everything by default,
-    // ghost/highlight → show everything by default.
-    const defaultVis = visibility === "isolate" ? "false" : "true";
+    // Build <Components>: embed GUIDs if a selector was active.
+    let componentsXml;
+    if (currentGuids.length) {
+      if (visibility === "isolate") {
+        const exc = currentGuids.map(g => `<Component IfcGuid="${esc(g)}"/>`).join("");
+        componentsXml = `<Components><Visibility DefaultVisibility="false"><Exceptions>${exc}</Exceptions></Visibility></Components>`;
+      } else {
+        const sel = currentGuids.map(g => `<Component IfcGuid="${esc(g)}"/>`).join("");
+        componentsXml = `<Components><Selection>${sel}</Selection><Visibility DefaultVisibility="true"/></Components>`;
+      }
+    } else {
+      const defaultVis = visibility === "isolate" ? "false" : "true";
+      componentsXml = `<Components><Visibility DefaultVisibility="${defaultVis}"/></Components>`;
+    }
     viewpointXml = `<?xml version="1.0" encoding="utf-8"?>
 <VisualizationInfo Guid="${vpGuid}">
-  <Components><Visibility DefaultVisibility="${defaultVis}"/></Components>
+  ${componentsXml}
   ${camXml}
   ${clipsXml}
 </VisualizationInfo>`;
@@ -1356,9 +1345,10 @@ async function main() {
       console.warn("Highlighter unavailable:", err.message);
     }
 
+    currentGuids = [];
     if (selectorStr) {
       statusEl.textContent = "Applying selector…";
-      await applySelector(components, model, selectorStr, currentIfcUrl, visibility);
+      currentGuids = await applySelector(components, model, selectorStr, currentIfcUrl, visibility) ?? [];
     }
 
     if (selectorStr && queryStr) {
