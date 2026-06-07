@@ -73,6 +73,25 @@ class TestSelectDocuments:
         r = client.post("/documents/1.0/select-documents", json={})
         assert r.status_code == 422
 
+    def test_access_token_forwarded_to_picker_url(self):
+        r = self._post(headers={"Authorization": "Bearer secret-tok-123"})
+        url = r.json()["select_documents_url"]
+        params = parse_qs(urlparse(url).query)
+        assert params["access_token"][0] == "secret-tok-123"
+
+    def test_token_scheme_forwarded_to_picker_url(self):
+        # Forgejo's own "token <tok>" form is also accepted
+        r = self._post(headers={"Authorization": "token abc-789"})
+        url = r.json()["select_documents_url"]
+        params = parse_qs(urlparse(url).query)
+        assert params["access_token"][0] == "abc-789"
+
+    def test_no_access_token_when_unauthenticated(self):
+        r = self._post()
+        url = r.json()["select_documents_url"]
+        params = parse_qs(urlparse(url).query)
+        assert "access_token" not in params
+
 
 # ---------------------------------------------------------------------------
 # GET /documents/1.0/select-documents/ui
@@ -122,6 +141,20 @@ class TestSelectDocumentsUi:
         assert r.status_code == 200
         # The raw </script> should not appear unescaped outside a JSON string
         assert "</script><script>" not in r.text
+
+    def test_access_token_embedded_in_html(self):
+        r = client.get(
+            "/documents/1.0/select-documents/ui",
+            params={"callback_url": CALLBACK, "access_token": "tok-xyz"},
+        )
+        assert r.status_code == 200
+        assert "tok-xyz" in r.text
+        assert "Bearer" in r.text
+
+    def test_access_token_null_when_absent(self):
+        r = self._get()
+        # JS receives the literal null so it falls back to cookie auth
+        assert "const ACCESS_TOKEN = null;" in r.text
 
 
 # ---------------------------------------------------------------------------

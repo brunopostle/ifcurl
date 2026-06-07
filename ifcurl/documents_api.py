@@ -196,6 +196,21 @@ class SelectDocumentsRequest(BaseModel):
     callback: _Callback
 
 
+def _bearer_token(request: Request) -> str | None:
+    """Extract the OAuth2 access token from the request's Authorization header.
+
+    Accepts both ``Bearer <token>`` and Forgejo's ``token <token>`` forms and
+    returns the bare token, or ``None`` when no Authorization header is present.
+    """
+    header = request.headers.get("authorization")
+    if not header:
+        return None
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() in ("bearer", "token") and value:
+        return value
+    return header  # opaque value with no recognised scheme — forward verbatim
+
+
 @router.post("/select-documents")
 def select_documents(body: SelectDocumentsRequest, request: Request) -> JSONResponse:
     """Return a URL for the document-picker UI.
@@ -204,6 +219,10 @@ def select_documents(body: SelectDocumentsRequest, request: Request) -> JSONResp
     redirects the user's browser to ``select_documents_url``; the picker lets
     the user choose an IFC file from a Forgejo repository, then redirects back
     to ``callback.url`` with ``document_ids[]`` query parameters appended.
+
+    The OAuth2 access token presented on this request (``Authorization:
+    Bearer``) is threaded through to the picker so it can query the Forgejo API
+    on the user's behalf — without it the picker only sees public repositories.
     """
     host = request.headers.get("x-forwarded-host") or request.headers.get("host", "localhost")
     proto = request.headers.get("x-forwarded-proto", "https")
@@ -212,20 +231,27 @@ def select_documents(body: SelectDocumentsRequest, request: Request) -> JSONResp
         f"{base}/documents/1.0/select-documents/ui"
         f"?callback_url={quote(body.callback.url, safe='')}"
     )
+    token = _bearer_token(request)
+    if token:
+        picker_url += f"&access_token={quote(token, safe='')}"
     return JSONResponse({"select_documents_url": picker_url})
 
 
 @router.get("/select-documents/ui", response_class=HTMLResponse)
-def select_documents_ui(callback_url: str) -> HTMLResponse:
+def select_documents_ui(callback_url: str, access_token: str | None = None) -> HTMLResponse:
     """Serve the document-picker HTML page.
 
     The page uses the Forgejo REST API to let the user browse repositories and
     select an IFC file.  On selection it redirects to ``callback_url`` with
     ``document_ids[]`` appended.
+
+    When ``access_token`` is supplied (forwarded from the select-documents
+    flow) the picker sends it as ``Authorization: Bearer`` on every Forgejo API
+    call so private repositories the user can access are listed.
     """
     if not callback_url:
         raise HTTPException(status_code=400, detail="callback_url is required")
-    return HTMLResponse(_picker_html(callback_url))
+    return HTMLResponse(_picker_html(callback_url, access_token))
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +263,8 @@ _PICKER_TEMPLATE = """\
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <!-- access_token may ride in this page's URL; keep it out of Referer headers -->
+  <meta name="referrer" content="no-referrer">
   <title>Select IFC Document</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
@@ -269,13 +297,19 @@ _PICKER_TEMPLATE = """\
 <script>
 const CALLBACK_URL = __CALLBACK_URL__;
 const FORGEJO_BASE = __FORGEJO_BASE__;
+const ACCESS_TOKEN = __ACCESS_TOKEN__;
 let currentOwner = '', currentRepo = '', currentPath = '';
 
 function setStatus(msg) { document.getElementById('status').textContent = msg; }
 function setError(msg) { document.getElementById('error').textContent = msg; }
 
 async function apiFetch(path) {
-  const r = await fetch(FORGEJO_BASE + path, {credentials: 'include'});
+  // Prefer the OAuth2 access token (so private repos are visible); fall back to
+  // the browser's Forgejo session cookie when no token was supplied.
+  const opts = ACCESS_TOKEN
+    ? {headers: {Authorization: 'Bearer ' + ACCESS_TOKEN}}
+    : {credentials: 'include'};
+  const r = await fetch(FORGEJO_BASE + path, opts);
   if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
   return r.json();
 }
@@ -387,14 +421,16 @@ loadRepos();
 """
 
 
-def _picker_html(callback_url: str) -> str:
-    def _js(v: str) -> str:
+def _picker_html(callback_url: str, access_token: str | None = None) -> str:
+    def _js(v: str | None) -> str:
         # json.dumps is valid JSON but </script> inside <script> breaks HTML
         # parsing; <\/ is a legal JSON escape that browsers handle correctly.
+        # json.dumps(None) yields "null" — the JS treats that as "no token".
         return json.dumps(v).replace("</", "<\\/")
 
     return (
         _PICKER_TEMPLATE
         .replace("__CALLBACK_URL__", _js(callback_url))
         .replace("__FORGEJO_BASE__", _js(_FORGEJO_URL))
+        .replace("__ACCESS_TOKEN__", _js(access_token))
     )
