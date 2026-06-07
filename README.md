@@ -139,12 +139,29 @@ The BCF API forwards the client's `Authorization: Bearer` header to Forgejo's RE
 | `IFCURL_OAUTH2_CLIENT_ID` | (none) | Forgejo OAuth2 app client ID — required for Foundation API OAuth2 proxy routes |
 | `IFCURL_OAUTH2_CLIENT_SECRET` | (none) | Forgejo OAuth2 app client secret |
 
-**Proxy configuration** — add to nginx or Caddy on the Forgejo hostname:
+**Proxy configuration** — add to nginx on the Forgejo hostname (before the catch-all `location /` block):
 
 ```nginx
-location /foundation/ { proxy_pass http://localhost:8000/foundation/; }
-location /bcf/        { proxy_pass http://localhost:8000/bcf/; }
-location /documents/  { proxy_pass http://localhost:8000/documents/; }
+location ~ ^/(preview|select|query|bcf|render_diff) {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 120s;
+}
+
+location /foundation/ {
+    proxy_pass http://127.0.0.1:8000/foundation/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location /documents/ {
+    proxy_pass http://127.0.0.1:8000/documents/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
 ```
 
 **Caching:**
