@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ifcurl.checkout import _ensure_checkout, _ensure_viewer_excludes, _VIEWER_EXCLUDES, get_checkout
+from ifcurl.checkout import _ensure_checkout, _ensure_viewer_excludes, _remap_origin, _VIEWER_EXCLUDES, get_checkout
 from ifcurl.url import IfcUrl
 
 
@@ -248,3 +248,112 @@ class TestGetCheckout:
         url = IfcUrl.parse("ifc://example.com/org/repo@abc123def")
         with pytest.raises(ValueError, match="'path'"):
             get_checkout(url)
+
+
+# ---------------------------------------------------------------------------
+# _remap_origin
+# ---------------------------------------------------------------------------
+
+
+class TestRemapOrigin:
+    """Tests for origin-remapping when a local working repo is discovered."""
+
+    def _make_checkout_with_cache(self, tmp_path):
+        """Return (checkout_dir, cache_dir, genesis_hexsha, bare_dir)."""
+        import git as gitpkg
+
+        src = tmp_path / "source"
+        src.mkdir()
+        (src / "model.ifc").write_bytes(b"IFC4\n")
+        repo = gitpkg.Repo.init(str(src))
+        with repo.config_writer() as cw:
+            cw.set_value("user", "name", "Test")
+            cw.set_value("user", "email", "t@t.com")
+        repo.index.add(["model.ifc"])
+        commit = repo.index.commit("init")
+
+        cache_dir = tmp_path / "cache"
+        bare_dir = cache_dir / "repo.git"
+        gitpkg.Repo.clone_from(str(src), str(bare_dir), bare=True)
+
+        checkout_dir = cache_dir / "checkout"
+        gitpkg.Repo.clone_from(str(bare_dir), str(checkout_dir))
+        gitpkg.Repo(str(checkout_dir)).git.checkout("--detach", commit.hexsha)
+
+        genesis = commit.hexsha  # single-commit repo — genesis == head
+        (cache_dir / "genesis_commit").write_text(genesis)
+
+        return checkout_dir, cache_dir, genesis, src
+
+    def test_no_local_repo_origin_unchanged(self, tmp_path, monkeypatch):
+        import git as gitpkg
+
+        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [])
+        checkout_dir, cache_dir, _, _ = self._make_checkout_with_cache(tmp_path)
+        _remap_origin(checkout_dir, cache_dir)
+        repo = gitpkg.Repo(str(checkout_dir))
+        assert {r.name for r in repo.remotes} == {"origin"}
+
+    def test_local_repo_found_origin_becomes_local(self, tmp_path, monkeypatch):
+        import git as gitpkg
+
+        checkout_dir, cache_dir, genesis, src = self._make_checkout_with_cache(tmp_path)
+
+        local_repo = tmp_path / "local_work"
+        gitpkg.Repo.clone_from(str(src), str(local_repo))
+
+        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [local_repo])
+        _remap_origin(checkout_dir, cache_dir)
+
+        repo = gitpkg.Repo(str(checkout_dir))
+        remote_names = {r.name for r in repo.remotes}
+        assert "origin" in remote_names
+        assert "upstream" in remote_names
+        assert repo.remote("origin").url == str(local_repo)
+
+    def test_upstream_is_bare_cache(self, tmp_path, monkeypatch):
+        import git as gitpkg
+
+        checkout_dir, cache_dir, genesis, src = self._make_checkout_with_cache(tmp_path)
+
+        local_repo = tmp_path / "local_work"
+        gitpkg.Repo.clone_from(str(src), str(local_repo))
+
+        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [local_repo])
+        _remap_origin(checkout_dir, cache_dir)
+
+        repo = gitpkg.Repo(str(checkout_dir))
+        # upstream should point at the bare cache
+        assert str(cache_dir / "repo.git") in repo.remote("upstream").url
+
+    def test_idempotent(self, tmp_path, monkeypatch):
+        import git as gitpkg
+
+        checkout_dir, cache_dir, genesis, src = self._make_checkout_with_cache(tmp_path)
+
+        local_repo = tmp_path / "local_work"
+        gitpkg.Repo.clone_from(str(src), str(local_repo))
+
+        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [local_repo])
+        _remap_origin(checkout_dir, cache_dir)
+        _remap_origin(checkout_dir, cache_dir)  # second call must not error
+
+        repo = gitpkg.Repo(str(checkout_dir))
+        remote_names = [r.name for r in repo.remotes]
+        assert remote_names.count("origin") == 1
+        assert remote_names.count("upstream") == 1
+
+    def test_genesis_from_bare_repo_when_file_missing(self, tmp_path, monkeypatch):
+        import git as gitpkg
+
+        checkout_dir, cache_dir, genesis, src = self._make_checkout_with_cache(tmp_path)
+        (cache_dir / "genesis_commit").unlink()  # remove cached file
+
+        local_repo = tmp_path / "local_work"
+        gitpkg.Repo.clone_from(str(src), str(local_repo))
+
+        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [local_repo])
+        _remap_origin(checkout_dir, cache_dir)
+
+        repo = gitpkg.Repo(str(checkout_dir))
+        assert "upstream" in {r.name for r in repo.remotes}

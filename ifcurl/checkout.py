@@ -66,7 +66,8 @@ try:
 except ImportError:
     _HAS_GITPYTHON = False
 
-from ifcurl.git import _cache_dir_for, fetch_ifc
+from ifcurl.discover import find_local_repos
+from ifcurl.git import _cache_dir_for, _compute_genesis, fetch_ifc
 from ifcurl.url import IfcUrl
 
 
@@ -105,6 +106,7 @@ def get_checkout(ifc_url: IfcUrl, token: str | None = None) -> Path:
     cache_dir = _cache_dir_for(ifc_url.git_remote_url())
     checkout_dir = _ensure_checkout(cache_dir, hexsha)
     _ensure_viewer_excludes(checkout_dir)
+    _remap_origin(checkout_dir, cache_dir)
     return checkout_dir / ifc_url.path
 
 
@@ -150,6 +152,40 @@ def _ensure_checkout(cache_dir: Path, hexsha: str) -> Path:
         repo.git.checkout("--detach", hexsha)
 
     return checkout_dir
+
+
+def _remap_origin(checkout_dir: Path, cache_dir: Path) -> None:
+    """Remap checkout remotes when a local working repo is found.
+
+    If a local repo sharing the same genesis commit is found via
+    :func:`ifcurl.discover.find_local_repos`, the checkout's ``origin``
+    remote is renamed to ``upstream`` (pointing at the bare cache) and a new
+    ``origin`` remote is added pointing at the local repo.  This mirrors the
+    standard fork workflow: fetch from ``upstream``, push to ``origin``
+    (local repo), then push to the shared remote and open a PR.
+
+    If no local repo is found, ``origin`` remains the bare cache (read-only
+    without credentials).  The function is idempotent: it skips remapping if
+    the ``upstream`` remote already exists.
+    """
+    repo = git.Repo(str(checkout_dir))
+    if "upstream" in {r.name for r in repo.remotes}:
+        return
+
+    genesis_file = cache_dir / "genesis_commit"
+    if genesis_file.exists():
+        genesis = genesis_file.read_text().strip()
+    else:
+        bare_repo = git.Repo(str(cache_dir / "repo.git"))
+        genesis = _compute_genesis(bare_repo)
+
+    local_repos = find_local_repos(genesis)
+    if not local_repos:
+        return
+
+    _logger.debug("Remapping checkout origin → %s, upstream → bare cache", local_repos[0])
+    repo.git.remote("rename", "origin", "upstream")
+    repo.git.remote("add", "origin", str(local_repos[0]))
 
 
 def _ensure_viewer_excludes(checkout_dir: Path) -> None:
