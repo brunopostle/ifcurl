@@ -350,19 +350,25 @@ function addListItem(list, text, cls, onclick) {
 
 function renderBreadcrumb(path) {
   const bc = document.getElementById('breadcrumb');
+  bc.textContent = '';
   const parts = path ? path.split('/') : [];
-  const spans = ['<span onclick="browseDir(\\'\\')">' + escHtml(currentRepo) + '</span>'];
+  bc.appendChild(makeCrumb(currentRepo, ''));
   let built = '';
   for (const p of parts) {
     built = built ? built + '/' + p : p;
+    const sep = document.createTextNode(' / ');
+    bc.appendChild(sep);
     const captured = built;
-    spans.push('<span onclick="browseDir(\\'' + captured + '\\')">' + escHtml(p) + '</span>');
+    bc.appendChild(makeCrumb(p, captured));
   }
-  bc.innerHTML = spans.join(' / ');
 }
 
-function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function makeCrumb(label, target) {
+  const s = document.createElement('span');
+  s.textContent = label;
+  s.style.cursor = 'pointer';
+  s.onclick = () => browseDir(target);
+  return s;
 }
 
 function selectFile(path) {
