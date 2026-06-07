@@ -66,7 +66,7 @@ try:
 except ImportError:
     _HAS_GITPYTHON = False
 
-from ifcurl.discover import find_local_repos
+from ifcurl.discover import select_local_repo
 from ifcurl.git import _cache_dir_for, _compute_genesis, fetch_ifc
 from ifcurl.url import IfcUrl
 
@@ -179,13 +179,13 @@ def _remap_origin(checkout_dir: Path, cache_dir: Path) -> None:
         bare_repo = git.Repo(str(cache_dir / "repo.git"))
         genesis = _compute_genesis(bare_repo)
 
-    local_repos = find_local_repos(genesis)
-    if not local_repos:
+    local_repo = select_local_repo(genesis)
+    if local_repo is None:
         return
 
-    _logger.debug("Remapping checkout origin → %s, upstream → bare cache", local_repos[0])
+    _logger.debug("Remapping checkout origin → %s, upstream → bare cache", local_repo)
     repo.git.remote("rename", "origin", "upstream")
-    repo.git.remote("add", "origin", str(local_repos[0]))
+    repo.git.remote("add", "origin", str(local_repo))
 
 
 def _ensure_viewer_excludes(checkout_dir: Path) -> None:

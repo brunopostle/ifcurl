@@ -288,7 +288,7 @@ class TestRemapOrigin:
     def test_no_local_repo_origin_unchanged(self, tmp_path, monkeypatch):
         import git as gitpkg
 
-        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [])
+        monkeypatch.setattr("ifcurl.checkout.select_local_repo", lambda _: None)
         checkout_dir, cache_dir, _, _ = self._make_checkout_with_cache(tmp_path)
         _remap_origin(checkout_dir, cache_dir)
         repo = gitpkg.Repo(str(checkout_dir))
@@ -302,7 +302,7 @@ class TestRemapOrigin:
         local_repo = tmp_path / "local_work"
         gitpkg.Repo.clone_from(str(src), str(local_repo))
 
-        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [local_repo])
+        monkeypatch.setattr("ifcurl.checkout.select_local_repo", lambda _: local_repo)
         _remap_origin(checkout_dir, cache_dir)
 
         repo = gitpkg.Repo(str(checkout_dir))
@@ -319,7 +319,7 @@ class TestRemapOrigin:
         local_repo = tmp_path / "local_work"
         gitpkg.Repo.clone_from(str(src), str(local_repo))
 
-        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [local_repo])
+        monkeypatch.setattr("ifcurl.checkout.select_local_repo", lambda _: local_repo)
         _remap_origin(checkout_dir, cache_dir)
 
         repo = gitpkg.Repo(str(checkout_dir))
@@ -334,7 +334,7 @@ class TestRemapOrigin:
         local_repo = tmp_path / "local_work"
         gitpkg.Repo.clone_from(str(src), str(local_repo))
 
-        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [local_repo])
+        monkeypatch.setattr("ifcurl.checkout.select_local_repo", lambda _: local_repo)
         _remap_origin(checkout_dir, cache_dir)
         _remap_origin(checkout_dir, cache_dir)  # second call must not error
 
@@ -352,7 +352,7 @@ class TestRemapOrigin:
         local_repo = tmp_path / "local_work"
         gitpkg.Repo.clone_from(str(src), str(local_repo))
 
-        monkeypatch.setattr("ifcurl.checkout.find_local_repos", lambda _: [local_repo])
+        monkeypatch.setattr("ifcurl.checkout.select_local_repo", lambda _: local_repo)
         _remap_origin(checkout_dir, cache_dir)
 
         repo = gitpkg.Repo(str(checkout_dir))

@@ -10,12 +10,16 @@ import pytest
 
 from ifcurl.discover import (
     _cache_file,
+    _dump_config,
     _genesis_for_local,
+    _get_project_origin,
     _get_search_paths,
     _load_cache,
     _save_cache,
+    _save_project_origin,
     _scan_for_git_repos,
     find_local_repos,
+    select_local_repo,
 )
 
 
@@ -256,3 +260,176 @@ class TestFindLocalRepos:
 
         result = find_local_repos(genesis)
         assert search_dir / "proj" in result
+
+
+# ---------------------------------------------------------------------------
+# _dump_config
+# ---------------------------------------------------------------------------
+
+
+class TestDumpConfig:
+    def test_string_value(self):
+        out = _dump_config({"sec": {"key": "val"}})
+        assert '[sec]\nkey = "val"' in out
+
+    def test_bool_false(self):
+        out = _dump_config({"sec": {"key": False}})
+        assert "key = false" in out
+
+    def test_bool_true(self):
+        out = _dump_config({"sec": {"key": True}})
+        assert "key = true" in out
+
+    def test_list_value(self):
+        out = _dump_config({"sec": {"paths": ["/a", "/b"]}})
+        assert 'paths = ["/a", "/b"]' in out
+
+    def test_multiple_sections(self):
+        out = _dump_config({"a": {"x": "1"}, "b": {"y": "2"}})
+        assert "[a]" in out
+        assert "[b]" in out
+
+    def test_roundtrip_via_tomllib(self):
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib
+        cfg = {"repo_search": {"paths": ["/home/user/proj"]}, "project_origins": {"abc": "/repo"}}
+        out = _dump_config(cfg)
+        parsed = tomllib.loads(out)
+        assert parsed == cfg
+
+
+# ---------------------------------------------------------------------------
+# _get_project_origin / _save_project_origin
+# ---------------------------------------------------------------------------
+
+
+class TestProjectOriginConfig:
+    def _setup(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ifcurl.discover.user_config_dir", lambda *a, **kw: str(tmp_path))
+        monkeypatch.setattr("ifcurl.discover.user_cache_dir", lambda *a, **kw: str(tmp_path / "cache"))
+
+    def test_missing_returns_none(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        assert _get_project_origin("a" * 40) is None
+
+    def test_save_and_read_back(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        path = tmp_path / "myrepo"
+        _save_project_origin("a" * 40, path)
+        assert _get_project_origin("a" * 40) == path
+
+    def test_false_returns_false(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        config_dir = tmp_path
+        config_dir.mkdir(parents=True, exist_ok=True)
+        genesis = "b" * 40
+        (config_dir / "config.toml").write_text(f'[project_origins]\n{genesis} = false\n')
+        result = _get_project_origin(genesis)
+        assert result is False
+
+    def test_save_preserves_existing_sections(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        search_dir = tmp_path / "projects"
+        search_dir.mkdir()
+        _write_config(tmp_path, [str(search_dir)])
+        _save_project_origin("c" * 40, tmp_path / "repo")
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib
+        cfg = tomllib.loads((tmp_path / "config.toml").read_text())
+        assert "repo_search" in cfg
+        assert "project_origins" in cfg
+
+
+# ---------------------------------------------------------------------------
+# select_local_repo
+# ---------------------------------------------------------------------------
+
+
+class TestSelectLocalRepo:
+    def _setup(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ifcurl.discover.user_config_dir", lambda *a, **kw: str(tmp_path / "config"))
+        monkeypatch.setattr("ifcurl.discover.user_cache_dir", lambda *a, **kw: str(tmp_path / "cache"))
+        search_dir = tmp_path / "projects"
+        search_dir.mkdir()
+        _write_config(tmp_path / "config", [str(search_dir)])
+        return search_dir
+
+    def test_no_candidates_returns_none(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        result = select_local_repo("a" * 40)
+        assert result is None
+
+    def test_single_candidate_returned_and_cached(self, tmp_path, monkeypatch):
+        search_dir = self._setup(tmp_path, monkeypatch)
+        genesis = _make_repo(search_dir / "building")
+        result = select_local_repo(genesis)
+        assert result == search_dir / "building"
+        assert _get_project_origin(genesis) == search_dir / "building"
+
+    def test_cached_path_gone_rescans(self, tmp_path, monkeypatch):
+        search_dir = self._setup(tmp_path, monkeypatch)
+        genesis = _make_repo(search_dir / "building")
+        select_local_repo(genesis)  # caches it
+
+        # Remove the repo — cached path is stale, rescan finds nothing
+        import shutil
+        shutil.rmtree(str(search_dir / "building"))
+        result = select_local_repo(genesis)
+        assert result is None
+
+    def test_false_in_config_returns_none(self, tmp_path, monkeypatch):
+        search_dir = self._setup(tmp_path, monkeypatch)
+        genesis = _make_repo(search_dir / "building")
+        config_dir = tmp_path / "config"
+        config_path = config_dir / "config.toml"
+        existing = config_path.read_text()
+        config_path.write_text(existing + f'\n[project_origins]\n{genesis} = false\n')
+        result = select_local_repo(genesis)
+        assert result is None
+
+    def test_multiple_candidates_calls_prompt_fn(self, tmp_path, monkeypatch):
+        import git as gitpkg
+
+        search_dir = self._setup(tmp_path, monkeypatch)
+        genesis = _make_repo(tmp_path / "upstream")
+        gitpkg.Repo.clone_from(str(tmp_path / "upstream"), str(search_dir / "clone1"))
+        gitpkg.Repo.clone_from(str(tmp_path / "upstream"), str(search_dir / "clone2"))
+
+        chosen = search_dir / "clone2"
+        called_with: list[list[Path]] = []
+
+        def fake_prompt(candidates):
+            called_with.append(candidates)
+            return chosen
+
+        result = select_local_repo(genesis, prompt_fn=fake_prompt)
+        assert result == chosen
+        assert len(called_with) == 1
+        assert len(called_with[0]) == 2
+
+    def test_prompt_none_returns_none(self, tmp_path, monkeypatch):
+        import git as gitpkg
+
+        search_dir = self._setup(tmp_path, monkeypatch)
+        genesis = _make_repo(tmp_path / "upstream")
+        gitpkg.Repo.clone_from(str(tmp_path / "upstream"), str(search_dir / "clone1"))
+        gitpkg.Repo.clone_from(str(tmp_path / "upstream"), str(search_dir / "clone2"))
+
+        result = select_local_repo(genesis, prompt_fn=lambda _: None)
+        assert result is None
+
+    def test_prompt_choice_is_cached(self, tmp_path, monkeypatch):
+        import git as gitpkg
+
+        search_dir = self._setup(tmp_path, monkeypatch)
+        genesis = _make_repo(tmp_path / "upstream")
+        gitpkg.Repo.clone_from(str(tmp_path / "upstream"), str(search_dir / "clone1"))
+        gitpkg.Repo.clone_from(str(tmp_path / "upstream"), str(search_dir / "clone2"))
+
+        chosen = search_dir / "clone1"
+        select_local_repo(genesis, prompt_fn=lambda _: chosen)
+        assert _get_project_origin(genesis) == chosen

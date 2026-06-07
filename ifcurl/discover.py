@@ -41,7 +41,7 @@ import json
 import logging
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 try:
@@ -86,6 +86,49 @@ def find_local_repos(genesis_commit: str) -> list[Path]:
     return matches
 
 
+def select_local_repo(
+    genesis_commit: str,
+    prompt_fn: Callable[[list[Path]], Path | None] | None = None,
+) -> Path | None:
+    """Return the user-preferred local repo for this genesis commit, or None.
+
+    Checks ``[project_origins]`` in ``config.toml`` first.  If a path is
+    cached and still exists, returns it.  If configured as ``false``, returns
+    None (read-only project, no push target).  If not cached:
+
+    * 0 repos found → ``None``
+    * 1 repo found → cache it automatically and return it
+    * 2+ repos found → call *prompt_fn* (or the default stdin prompt),
+      cache the chosen path, return it
+
+    :param genesis_commit: 40-character root commit hexsha.
+    :param prompt_fn: Override the interactive prompt.  Receives the list of
+        candidate :class:`~pathlib.Path` objects and returns the chosen one,
+        or ``None`` to skip.  Defaults to an interactive stdin prompt.
+    """
+    cached = _get_project_origin(genesis_commit)
+    if cached is False:
+        return None
+    if cached is not None:
+        if cached.is_dir():
+            return cached
+        _logger.debug("Cached project origin %s no longer exists; rescanning", cached)
+        _cache_file(genesis_commit).unlink(missing_ok=True)
+
+    candidates = find_local_repos(genesis_commit)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        _save_project_origin(genesis_commit, candidates[0])
+        return candidates[0]
+
+    fn = prompt_fn if prompt_fn is not None else _prompt_user
+    choice = fn(candidates)
+    if choice is not None:
+        _save_project_origin(genesis_commit, choice)
+    return choice
+
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -102,6 +145,83 @@ def _load_config() -> dict:
     except Exception as exc:
         _logger.warning("Could not read ifcurl config: %s", exc)
         return {}
+
+
+def _get_project_origin(genesis_commit: str) -> Path | bool | None:
+    """Return the configured origin for *genesis_commit* from ``config.toml``.
+
+    :returns: ``False`` if configured as read-only, a :class:`~pathlib.Path`
+        if a path is saved, or ``None`` if not configured.
+    """
+    val = _load_config().get("project_origins", {}).get(genesis_commit)
+    if val is None:
+        return None
+    if val is False:
+        return False
+    return Path(val)
+
+
+def _save_project_origin(genesis_commit: str, path: Path) -> None:
+    """Persist *path* as the push origin for *genesis_commit* in ``config.toml``."""
+    config_file = Path(user_config_dir("ifcurl")) / "config.toml"
+    config = _load_config()
+    config.setdefault("project_origins", {})[genesis_commit] = str(path)
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        config_file.write_text(_dump_config(config))
+    except OSError as exc:
+        _logger.warning("Could not save project origin to config: %s", exc)
+
+
+def _dump_config(config: dict) -> str:
+    """Serialise *config* to TOML (handles our schema: string lists and string/bool leaf values)."""
+    out: list[str] = []
+    for section, body in config.items():
+        if out:
+            out.append("")
+        out.append(f"[{section}]")
+        for key, val in body.items():
+            if isinstance(val, bool):
+                out.append(f"{key} = {str(val).lower()}")
+            elif isinstance(val, list):
+                items = ", ".join(f'"{v}"' for v in val)
+                out.append(f"{key} = [{items}]")
+            else:
+                escaped = str(val).replace("\\", "\\\\").replace('"', '\\"')
+                out.append(f'{key} = "{escaped}"')
+    return "\n".join(out) + "\n"
+
+
+def _prompt_user(candidates: list[Path]) -> Path | None:
+    """Interactive stdin prompt when multiple local repos share the same genesis commit."""
+    import sys
+
+    if not sys.stdin.isatty():
+        _logger.warning(
+            "Multiple local repos found for this project but stdin is not a TTY; "
+            "skipping origin remap.  Set [project_origins] in ~/.config/ifcurl/config.toml to configure."
+        )
+        return None
+
+    print(
+        "\nMultiple local repositories match this project. "
+        "Choose one to use as the push target (or 0 to skip):",
+        file=sys.stderr,
+    )
+    for i, p in enumerate(candidates, 1):
+        print(f"  {i}. {p}", file=sys.stderr)
+
+    while True:
+        try:
+            raw = input("Choice [0]: ").strip() or "0"
+            n = int(raw)
+        except (ValueError, EOFError, KeyboardInterrupt):
+            return None
+        if n == 0:
+            return None
+        if 1 <= n <= len(candidates):
+            return candidates[n - 1]
+        print(f"  Please enter a number between 0 and {len(candidates)}.", file=sys.stderr)
 
 
 def _get_search_paths() -> list[Path]:
