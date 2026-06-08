@@ -758,6 +758,7 @@ async function applyQuery(srcUrl, queryPath) {
   queryPanelTitle.textContent = queryPath;
   queryValHeader.textContent  = queryPath;
   queryTbody.innerHTML = "";
+  let activeQueryRow = null;
   for (const [guid, value] of entries) {
     const tr = document.createElement("tr");
     tr.style.cursor = "pointer";
@@ -768,6 +769,11 @@ async function applyQuery(srcUrl, queryPath) {
     tr.appendChild(tdGuid);
     tr.appendChild(tdVal);
     tr.addEventListener("click", async () => {
+      if (activeQueryRow !== tr) {
+        activeQueryRow?.classList.remove("active");
+        tr.classList.add("active");
+        activeQueryRow = tr;
+      }
       if (!components || !loadedModel) return;
       const localIds = (await loadedModel.getLocalIdsByGuids([guid])).filter(id => id !== null);
       if (!localIds.length) return;
