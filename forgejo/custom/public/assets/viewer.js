@@ -45,6 +45,9 @@ let activeClipper  = null;
 let loadedModel    = null;
 let rendererCanvas = null;
 let currentGuids   = [];
+// localIds of the currently inspected/selected element(s), or null when nothing
+// is selected. Used by the fit button to frame the selection instead of the model.
+let selectedLocalIds = null;
 // Raw HTTP URL of the loaded IFC file, captured once at model load time.
 // Used to decide whether a loadUrl call needs a full reload or an in-place update.
 let modelRawUrl = null;
@@ -397,8 +400,20 @@ newIssueBtn.addEventListener("click", () => {
   window.open(issueUrl, "_blank", "noopener");
 });
 
-document.getElementById("fit-btn").addEventListener("click", () => {
-  if (cameraControls && loadedModel && !loadedModel.box.isEmpty())
+document.getElementById("fit-btn").addEventListener("click", async () => {
+  if (!cameraControls || !loadedModel) return;
+  if (selectedLocalIds?.length) {
+    try {
+      const box = await loadedModel.getMergedBox(selectedLocalIds);
+      if (box && !box.isEmpty()) {
+        await cameraControls.fitToBox(box, true);
+        return;
+      }
+    } catch (err) {
+      console.warn("Fit to selection failed, falling back to model:", err.message);
+    }
+  }
+  if (!loadedModel.box.isEmpty())
     cameraControls.fitToBox(loadedModel.box, true);
 });
 
@@ -777,6 +792,7 @@ async function applyQuery(srcUrl, queryPath) {
       if (!components || !loadedModel) return;
       const localIds = (await loadedModel.getLocalIdsByGuids([guid])).filter(id => id !== null);
       if (!localIds.length) return;
+      selectedLocalIds = localIds;
       const items = { [loadedModel.modelId]: new Set(localIds) };
       await applyFragmentStyle(components, items, new THREE.Color(0xff8800), 1);
     });
@@ -1305,6 +1321,7 @@ async function main() {
   try {
     const model  = await ifcLoader.load(buffer, true, "model");
     loadedModel  = model;
+    selectedLocalIds = null;
     modelRawUrl  = toRawUrl(currentIfcUrl);
     world.scene.three.add(model.object);
 
@@ -1335,6 +1352,11 @@ async function main() {
       highlighter = components.get(OBCF.Highlighter);
       highlighter.setup({ world });
       highlighter.events.select.onHighlight.add(async (fragmentIdMap) => {
+        selectedLocalIds = Object.values(fragmentIdMap)
+          .filter(Boolean)
+          .flatMap(ids => [...ids])
+          .filter(id => id != null);
+        if (!selectedLocalIds.length) selectedLocalIds = null;
         for (const localIds of Object.values(fragmentIdMap)) {
           if (!localIds) continue;
           const localId = [...localIds][0];
@@ -1355,6 +1377,7 @@ async function main() {
         }
       });
       highlighter.events.select.onClear.add(() => {
+        selectedLocalIds = null;
         propsPanel.style.display = "none";
       });
     } catch (err) {
