@@ -199,6 +199,8 @@ Every one of these cost a real failed run here.
 | `cannot chdir to /root: Permission denied` | A `sudo -u <runner-user>` command run from root's home. `cd /tmp` first. |
 | Action cannot be resolved at job start | Check `DEFAULT_ACTIONS_URL` in `app.ini`, and that the host can reach it. |
 | Podman socket missing after the box is idle | `loginctl enable-linger <runner-user>` was not run. |
+| Resource limits in `config.yaml` have no effect | cgroup controllers not delegated to the runner user — check `cgroup.controllers`. |
+| A workflow's `container.options` appears to do nothing | It does nothing; v6.4.0 drops the field. Set options in the runner config instead. |
 | `413` pushing the image to a Forgejo registry | `client_max_body_size` too small on the Forgejo vhost. |
 
 ### Choosing the scope
@@ -385,25 +387,53 @@ Whole IDS files can pass this way. Read the counts, not just the colour.
 Worth reading before pointing this at a repository that takes pull requests from people
 you do not know — which, given the design, is a likely use.
 
-**What holds.** Jobs run in a container, as an unprivileged user, with
-`privileged: false` and an empty `valid_volumes`, so no host path can be bind-mounted.
-The config enforcing that is root-owned and a workflow cannot rewrite it.
+**What holds — tested, not assumed.** Jobs run in a container, as an unprivileged user,
+with `privileged: false` and an empty `valid_volumes`. The config enforcing that is
+root-owned, so a workflow cannot rewrite it. Specifically verified on the versions in the
+table above:
 
-**What does not:**
+- A workflow asking for a host path through `volumes:` gets no mount.
+- A workflow asking through `options: -v /etc:/host-etc -v /tmp:/host-tmp` also gets no
+  mount, cannot read `/etc`, and cannot write to the host.
+- `options: --privileged` does not re-enable privilege: `mknod` is refused and `CapEff`
+  stays at the unprivileged `00000000800405fb`.
 
-- **No CPU, memory or disk limits by default.** This is the practical risk and it needs
-  no malice — a runaway loop or an oversized model can exhaust the RAM or disk of the
-  machine that also serves your Forgejo instance. Set `container.options` in the
-  *runner's* config (root-owned, so a workflow cannot lift it); there is a commented
-  example in [`ci/runner-config.yaml`](ci/runner-config.yaml). Choose the numbers
-  deliberately: too low and legitimate builds get OOM-killed.
-- **`container.options` in a *workflow* is an untested bypass.** `valid_volumes` was
-  verified against the `volumes:` list only. Whether a workflow can smuggle
-  `-v /etc:/host-etc` past it through `options:` is **unverified** — do not assume it is
-  covered. If you need to know, test it by having a probe write evidence somewhere
-  inspectable from the host, rather than trusting the job's exit status.
+The reason all three fail is worth knowing, because it is blunter than it looks:
+**forgejo-runner v6.4.0 ignores workflow-level `container.options` entirely.** A job
+asking for `--memory=512m` still ran under the runner config's 2 GiB. It is not that `-v`
+is filtered — the whole field is dropped. **Re-test after a runner upgrade**, since a
+version that begins honouring workflow options reopens all of this at once.
+
+> **How to test this yourself, and how not to.** Never trust the job's own report: it
+> runs inside the thing you are testing, and `ls /host-etc | head -3` exits 0 even when
+> `ls` fails, because the status is `head`'s. Have the probe write evidence to a
+> bind-mounted host path and look for it from the host, or encode its finding in the
+> **job status**, which is recorded server-side. Then run a **positive control** — the
+> same `podman run -v ...` directly as the runner user — to prove your evidence path
+> would have shown a breach if one had happened. Without that control, a negative result
+> may only mean your probe was broken.
+
+**A trap in the same area:** `valid_volumes` fails *silently*. A job asking for an
+unlisted path is not refused — it starts, succeeds, and simply has no such mount. A green
+run is never evidence that a mount was granted.
+
+**What does not hold:**
+
+- **Resource limits are not on by default — set them.** This is the practical risk and it
+  needs no malice: a runaway loop or an oversized model can exhaust the RAM or disk of the
+  machine that also serves your Forgejo instance.
+  [`ci/runner-config.yaml`](ci/runner-config.yaml) ships
+  `--memory=2g --cpus=1.5 --pids-limit=512`, which is in production here and verified
+  enforced inside a real job container. **Check cgroup delegation first**: rootless Podman
+  can only enforce these if `cpu memory pids` appear in
+  `/sys/fs/cgroup/user.slice/user-<uid>.slice/cgroup.controllers`. Without it `--cpus` is
+  silently ignored and you have a limit you believe in but do not have.
 - **Outbound network from job containers is unrestricted.** A job can reach anything the
-  host can reach, your internal network included.
+  host can reach, your internal network included. This is the largest remaining gap, and
+  it matters most on the pull-request path below.
+- **`forgejo-runner exec` does not apply `valid_volumes` at all.** It is a local developer
+  convenience, not a sandbox — never use it to test isolation, and note that anyone who
+  can run it on the box is not constrained by the allowlist.
 - **Pull requests from strangers run automatically.** Observed, not assumed: a fork PR
   from a user who was neither a collaborator on the repository nor an admin created
   `pull_request` runs against `refs/pull/N/head` with no approval step. Forgejo 10.0.3

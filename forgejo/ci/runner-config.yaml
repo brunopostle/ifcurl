@@ -39,19 +39,32 @@ container:
   enable_ipv6: false
   privileged: false      # never true for a runner that accepts outside PRs
 
-  # RESOURCE LIMITS: set these. Nothing else caps a job.
-  # Without them one runaway loop or oversized model can exhaust the RAM and
-  # disk of the machine that also serves your Forgejo instance. Because this
-  # file is root-owned, a workflow cannot lift what you set here. Choose
-  # deliberately -- too low and legitimate builds get OOM-killed.
-  #   options: "--memory=2g --cpus=1.5 --pids-limit=512"
-  options:
+  # RESOURCE LIMITS. Nothing else caps a job: without these one runaway loop or
+  # oversized model can exhaust the RAM and disk of the machine that also serves
+  # your Forgejo instance. Because this file is root-owned, a workflow cannot
+  # lift what you set here.
+  #
+  # These values are in production and verified enforced inside a real job
+  # container (memory.max=2147483648, cpu.max="150000 100000", pids.max=512).
+  # Treat them as a starting point and raise them if legitimate builds are
+  # OOM-killed -- too low is its own failure mode.
+  #
+  # PREREQUISITE: rootless podman can only enforce these if the cgroup
+  # controllers are delegated to the runner user. Check before trusting them:
+  #   cat /sys/fs/cgroup/user.slice/user-<uid>.slice/cgroup.controllers
+  # You need `cpu memory pids` in that list. Without delegation --cpus is
+  # silently ignored and you have a limit you believe in but do not have.
+  options: "--memory=2g --cpus=1.5 --pids-limit=512"
 
   workdir_parent:
 
   # ENFORCEMENT POINT. Empty means a job may bind-mount NO host path at all,
   # which is what makes it safe to run an outside contributor's pull request.
   # These validation checks need no host access whatsoever -- keep it empty.
+  #
+  # The failure mode is SILENT: a job asking for an unlisted path is not
+  # refused, it starts, succeeds, and simply has no such mount. Never read a
+  # green run as proof a mount was granted.
   valid_volumes:
     []
 
