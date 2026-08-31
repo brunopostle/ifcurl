@@ -59,6 +59,14 @@ For a self-contained local deployment of Forgejo + ifcurl on Windows using Docke
 
 ---
 
+## Continuous integration
+
+For validating IFC models on push and pull request — schema/rule checks with
+`ifcopenshell.validate` and IDS compliance with `ifctester` — see [CI.md](CI.md).
+Designed but not yet implemented.
+
+---
+
 ## Prerequisites
 
 - ifcurl API service + render service running (see [Running the preview service](#running-the-preview-service))
