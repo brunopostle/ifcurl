@@ -1,11 +1,36 @@
 # Continuous integration for IFC repositories
 
-**Status: implemented and live on `bruno/brown-street` since 2026-08-31.** This
-documents the Forgejo Actions setup for validating IFC models on push and pull request.
+**Status: implemented and running in production since 2026-08-31.** This documents the
+Forgejo Actions setup for validating IFC models on push and pull request, end to end:
+enabling Actions, building the image, running a registered runner as an unprivileged
+user, and the two workflows.
 
-Three things below were wrong as designed and are corrected in place; each cost a failed
-run, and each is marked **[CORRECTED]** where it appears. The infrastructure half lives
-in `~/src/site_migration/forgejo-actions-plan.md`.
+Everything you need to copy is in [`ci/`](ci/):
+
+| File | Goes to |
+|---|---|
+| [`ci/ifc-ci.Containerfile`](ci/ifc-ci.Containerfile) | wherever you build images |
+| [`ci/runner-config.yaml`](ci/runner-config.yaml) | `/var/lib/forgejo-runner/ifc/config.yaml`, **root-owned** |
+| [`ci/forgejo-runner-ifc.service`](ci/forgejo-runner-ifc.service) | `/etc/systemd/system/` |
+| [`ci/ifc-lint.yml`](ci/ifc-lint.yml), [`ci/ids-lint.yml`](ci/ids-lint.yml) | `.forgejo/workflows/` in each model repo |
+
+**Versions this was built and tested against.** Actions is a fast-moving part of
+Forgejo, and several details below are version-specific:
+
+| Component | Version |
+|---|---|
+| Forgejo | 10.0.3 |
+| `forgejo-runner` | v6.4.0 |
+| Podman / Buildah | 4.9.3 / 1.33.7 (rootless) |
+| Host | Ubuntu 24.04 |
+
+Pair the runner with the Forgejo series it was released alongside. v6.4.0 goes with
+Forgejo 10; newer runners are *generally* backward compatible, but a runner many major
+versions ahead of the server is an untested Actions protocol handshake.
+
+Three things in the original design were wrong, each costing a failed run. They are
+corrected in place and marked **[CORRECTED]**; they are the errors most likely to catch
+you too.
 
 The premise: with IFC in git and Forgejo providing review, branching and merging, an
 IFC repository has essentially the same shape as a software repository — so it benefits
@@ -21,6 +46,171 @@ Two checks, matching the working GitHub Actions setup in
 | IDS compliance | `ifctester` + [`idssplit`](https://github.com/brunopostle/idssplit) | every model satisfies every rule in every `IDS/**/*.ids` |
 
 Both skip `libraries/` — those are vendored component sources, not deliverable models.
+
+## Server setup
+
+All of this is on the Forgejo host, as root unless stated. These workflows need no write
+access to anything outside their container, so one runner serves every IFC repository.
+
+Build the image (next section) whenever suits — the runner registers and starts fine
+without it, and only needs it when a job actually runs.
+
+### 1. Enable Actions
+
+Make sure `app.ini` carries an `[actions]` section, and restart Forgejo:
+
+```ini
+[actions]
+ENABLED = true
+DEFAULT_ACTIONS_URL = https://code.forgejo.org
+```
+
+`DEFAULT_ACTIONS_URL` is where `uses: actions/checkout@v4` is fetched from — Forgejo
+resolves actions from a forge, not from a local cache. Both keys were set explicitly
+here rather than left to defaults, since defaults for both have changed across Forgejo
+and Gitea versions; if you inherit an instance with no `[actions]` section, do not
+assume which way it is configured.
+
+### 2. Create the runner user
+
+A dedicated unprivileged user with no shell — not root, and not the user Forgejo runs
+as:
+
+```bash
+useradd --create-home --shell /usr/sbin/nologin ci-ifc
+loginctl enable-linger ci-ifc
+```
+
+`enable-linger` is load-bearing: without it the user's systemd session — and with it the
+rootless Podman socket — is torn down the moment nothing is logged in as that user, and
+the runner starts failing whenever the box has been quiet.
+
+`useradd` allocates the `/etc/subuid` and `/etc/subgid` ranges rootless Podman needs.
+Confirm they exist (`grep ci-ifc /etc/subuid`) before going further; a user created some
+other way may have none, and rootless Podman will not work without them.
+
+### 3. Install Podman and start the rootless socket
+
+```bash
+apt install podman buildah uidmap slirp4netns fuse-overlayfs
+sudo -u ci-ifc XDG_RUNTIME_DIR=/run/user/$(id -u ci-ifc) \
+  systemctl --user enable --now podman.socket
+```
+
+The runner speaks the Docker API; Podman's socket is compatible, so no Docker daemon is
+needed anywhere. Smoke-test it as that user before continuing:
+
+```bash
+cd /tmp    # see the gotcha below -- do not do this from /root
+sudo -u ci-ifc XDG_RUNTIME_DIR=/run/user/$(id -u ci-ifc) HOME=/home/ci-ifc \
+  podman run --rm alpine echo ok
+```
+
+> **Gotcha.** `sudo -u <user> podman ...` from a root shell whose cwd is `/root` fails
+> with `cannot chdir to /root: Permission denied` — an obscure message for a trivial
+> cause. `cd` somewhere the user can read first.
+
+### 4. Install the runner binary
+
+Download `forgejo-runner` matching your Forgejo series (see the version table above) to
+`/usr/local/bin/forgejo-runner`, `root:root 0755`, and **verify it against the upstream
+`.sha256`**. Nothing upgrades it automatically; it moves only when you replace it.
+
+### 5. Configuration and systemd unit
+
+Copy [`ci/runner-config.yaml`](ci/runner-config.yaml) to
+`/var/lib/forgejo-runner/ifc/config.yaml` and [`ci/forgejo-runner-ifc.service`](ci/forgejo-runner-ifc.service)
+to `/etc/systemd/system/`. Edit the uid in both to match `id -u ci-ifc`, and the image
+reference to your own registry and owner.
+
+```bash
+mkdir -p /var/lib/forgejo-runner/ifc
+chown ci-ifc:ci-ifc /var/lib/forgejo-runner/ifc
+install -o root -g root -m 0644 runner-config.yaml /var/lib/forgejo-runner/ifc/config.yaml
+```
+
+**Leave `config.yaml` owned by root, in a directory owned by the runner user.** That
+split is the enforcement model: the runner user must write `.runner` and its own state
+into the directory, but must not be able to rewrite the config that constrains it. If
+the runner user owns the config, a job that gets code execution as that user can widen
+`valid_volumes` to mount anything and the isolation is gone.
+
+### 6. Register the runner
+
+Mint a registration token in the Forgejo web UI, under **Settings → Actions → Runners →
+"Create new runner"**. *Which* settings page you take it from decides the runner's scope:
+
+- **A repository's** settings → that runner only ever serves that one repository.
+- **Your user** settings → any repository you own may send it jobs. Registration logs
+  `Runner in user-mode` and the resulting `.runner` names no repository.
+- **Site administration** → instance-wide, every repository on the server.
+
+```bash
+cd /var/lib/forgejo-runner/ifc
+sudo -u ci-ifc HOME=/home/ci-ifc XDG_RUNTIME_DIR=/run/user/$(id -u ci-ifc) \
+  /usr/local/bin/forgejo-runner register \
+    --no-interactive --instance https://forge.example.org \
+    --token <TOKEN> --name ifc \
+    --labels 'ifc:docker://forge.example.org/OWNER/ifc-ci:latest'
+
+chmod 0600 /var/lib/forgejo-runner/ifc/.runner
+systemctl enable --now forgejo-runner-ifc
+```
+
+Points that bite:
+
+- **The label must match `config.yaml`.** The runner advertises what it registered with;
+  a workflow's `runs-on:` is matched against that.
+- **`register` writes `.runner` mode 0664.** It holds a long-lived credential — `chmod
+  0600` it. The daemon will not start without this file, so register before enabling.
+- **Re-registering does not replace a runner**, it adds a second one. Delete the stale
+  entry in the web UI.
+- **Scope is fixed at registration.** Changing it means registering again, so decide
+  first.
+
+### 7. Verify
+
+Push anything to a repository with a workflow in it and watch:
+
+```bash
+journalctl -u forgejo-runner-ifc -f
+```
+
+A healthy start logs `runner: ifc, ..., declared successfully` and `[poller 0] launched`;
+picking up work logs `task N repo is OWNER/REPO`. Per-job output is in the Forgejo web UI
+under the repository's **Actions** tab — that is where a failing step's own log lives, and
+the runner journal will not show it.
+
+If a run never appears at all, the job was never scheduled and the runner is not the
+place to look: check that Actions is enabled, and that the repository has the workflow on
+the branch you pushed.
+
+### Troubleshooting
+
+Every one of these cost a real failed run here.
+
+| Symptom | Cause |
+|---|---|
+| `shopt: not found`, exit 127 | `run:` executes under `sh`. Add `shell: bash` to the step. |
+| `No module named '_pytest'`, exit 255 | `pytest` missing from the image — or the image was rebuilt but not reloaded into the runner user's store. Compare image IDs. |
+| Job stays queued forever, no runner takes it | `runs-on:` does not match any registered runner's **label**. The label is not the image name. |
+| Runner daemon will not start | No `.runner` file — it has not been registered, or registration failed. |
+| Runs appear but are cancelled immediately | Same label mismatch, most often a workflow still asking for `ubuntu-latest`. |
+| `cannot chdir to /root: Permission denied` | A `sudo -u <runner-user>` command run from root's home. `cd /tmp` first. |
+| Action cannot be resolved at job start | Check `DEFAULT_ACTIONS_URL` in `app.ini`, and that the host can reach it. |
+| Podman socket missing after the box is idle | `loginctl enable-linger <runner-user>` was not run. |
+| `413` pushing the image to a Forgejo registry | `client_max_body_size` too small on the Forgejo vhost. |
+
+### Choosing the scope
+
+The user-level scope is the one used here, so that a new IFC repository needs only a
+workflow file — no token, no server-side command. That is safe *because* this runner's
+`valid_volumes` is empty. Registration scope decides which repositories may send jobs;
+the label decides which jobs are accepted; and what a job gets either way is a container
+with no host mounts.
+
+A runner that writes to the host — a deployment runner, say — is a different case, and
+should be scoped to the single repository allowed to drive it.
 
 ## The `ifc-ci` container image
 
@@ -41,9 +231,9 @@ RUN pip install --no-cache-dir ifcopenshell ifctester pytest && \
       https://github.com/brunopostle/idssplit/releases/download/0.1.0/idssplit-0.1.0-py3-none-any.whl
 ```
 
-The built version pins every version as a build `ARG` and sha256-verifies the idssplit
-wheel; see `~/src/site_migration/forgejo-runner/ifc-ci.Containerfile`, which is the
-authoritative copy.
+The shipped version, [`ci/ifc-ci.Containerfile`](ci/ifc-ci.Containerfile), pins every
+version as a build `ARG` and sha256-verifies the idssplit wheel. Use that rather than
+the sketch above.
 
 Notes on the contents:
 
@@ -74,6 +264,30 @@ podman push <registry>/<owner>/ifc-ci:latest
 If pushing to a Forgejo registry behind nginx, raise `client_max_body_size` on that
 vhost first — the default in many configurations is far below the image size, and the
 push fails with an opaque `413`.
+
+### Rebuilding the image
+
+With `force_pull: false`, jobs read the image from the **runner user's own** rootless
+store, which is not the store you get as root. `buildah bud` as root therefore changes
+nothing a job will see. After every rebuild:
+
+```bash
+podman save -o /tmp/ifc-ci.tar forge.example.org/OWNER/ifc-ci:latest
+chmod 0644 /tmp/ifc-ci.tar
+sudo -u ci-ifc XDG_RUNTIME_DIR=/run/user/$(id -u ci-ifc) HOME=/home/ci-ifc \
+  podman load -i /tmp/ifc-ci.tar
+rm -f /tmp/ifc-ci.tar
+```
+
+Confirm by comparing image IDs — `podman images` as root and as the runner user must
+agree.
+
+**This one misleads.** A rebuild that was not reloaded left the `No module named
+'_pytest'` failure in place after it had been fixed, which reads exactly like the fix
+being wrong. Check the image ID before re-debugging anything.
+
+Setting `force_pull: true` and pushing to a registry removes this step, at the cost of
+needing registry credentials on the runner.
 
 ## Workflows
 
@@ -126,8 +340,8 @@ Keep the existing script body, adding `shell: bash` to the step. It splits each 
 into one file per rule with `idssplit`, then runs every rule against every model, so a
 failure names the specific rule rather than just the specification.
 
-The live copies of both workflows are `~/src/brown-street/.forgejo/workflows/`, with
-reference copies in `~/src/site_migration/forgejo-runner/brown-street-*.yml`.
+Both complete workflows are in [`ci/`](ci/) — copy them into `.forgejo/workflows/` and
+change the image reference to your own registry and owner.
 
 ### Why the IDS check greps output instead of using the exit status
 
@@ -157,36 +371,46 @@ grep approach is proven and works; this is a hardening option, not a correction.
 
 **Test this claim directly after any change to that step.** Because the exit status is
 meaningless, a broken grep leaves a check that passes unconditionally and looks healthy.
-The test used on 2026-08-31: take a passing IDS rule and widen its applicability until
-it matches real entities that cannot satisfy it — dropping the NL-Sfb classification
-facet from `IDS_random_example.ids` made the rule apply to all 32 windows in
-`brown-street`'s model, giving `[FAIL] (0/32)` and exit 1. A vacuous `(0/0)` pass, which
-is what most of these rules currently produce, proves nothing.
+The test used here: take a rule that passes and widen its applicability until it matches
+real entities that cannot satisfy it. Dropping the NL-Sfb classification facet from
+buildingSMART's `IDS_random_example.ids` made its rule apply to all 32 windows in the
+model instead of none, giving `[FAIL] (0/32)` and exit 1.
 
-## Runner requirements
+**Watch for vacuous passes.** `ifctester` prints the applicable/passing counts: a rule
+reporting `[PASS] (0/0)` matched nothing at all and tells you nothing about the model.
+Whole IDS files can pass this way. Read the counts, not just the colour.
 
-These workflows need no write access to anything outside their container, so they can
-share a single runner. Run it as a dedicated unprivileged user with an **empty
-`valid_volumes`** in the runner's `config.yaml` — that is the root-owned allowlist of
-host paths a job may bind-mount, and a workflow cannot override it. Keeping it empty
-means a compromised or hostile workflow (an outside contributor's PR, for instance)
-cannot reach the host filesystem at all.
+## Security: what this contains, and what it does not
 
-A rootless Podman socket is sufficient as the container backend; the runner speaks the
-Docker API and Podman provides a compatible socket. If using rootless Podman under a
-system user, remember `loginctl enable-linger <user>` or the socket disappears when the
-login session ends.
+Worth reading before pointing this at a repository that takes pull requests from people
+you do not know — which, given the design, is a likely use.
 
-As built, the runner is registered at **user level** rather than against one repo, so a
-new IFC repository needs only a workflow file — no token and no server-side command.
-That is safe here precisely because `valid_volumes` is empty: registration scope decides
-which repos may send jobs, the label decides which jobs are accepted, and what a job
-gets either way is a container with no host mounts.
+**What holds.** Jobs run in a container, as an unprivileged user, with
+`privileged: false` and an empty `valid_volumes`, so no host path can be bind-mounted.
+The config enforcing that is root-owned and a workflow cannot rewrite it.
 
-With `force_pull: false`, jobs read the image from the **runner user's own** rootless
-store. Rebuilding as root changes nothing until the image is `podman save`d and
-`podman load`ed into that store — a rebuild that was not reloaded caused the
-`No module named '_pytest'` failure above to persist after it had been fixed.
+**What does not:**
+
+- **No CPU, memory or disk limits by default.** This is the practical risk and it needs
+  no malice — a runaway loop or an oversized model can exhaust the RAM or disk of the
+  machine that also serves your Forgejo instance. Set `container.options` in the
+  *runner's* config (root-owned, so a workflow cannot lift it); there is a commented
+  example in [`ci/runner-config.yaml`](ci/runner-config.yaml). Choose the numbers
+  deliberately: too low and legitimate builds get OOM-killed.
+- **`container.options` in a *workflow* is an untested bypass.** `valid_volumes` was
+  verified against the `volumes:` list only. Whether a workflow can smuggle
+  `-v /etc:/host-etc` past it through `options:` is **unverified** — do not assume it is
+  covered. If you need to know, test it by having a probe write evidence somewhere
+  inspectable from the host, rather than trusting the job's exit status.
+- **Outbound network from job containers is unrestricted.** A job can reach anything the
+  host can reach, your internal network included.
+- **Pull requests from strangers run automatically.** Observed, not assumed: a fork PR
+  from a user who was neither a collaborator on the repository nor an admin created
+  `pull_request` runs against `refs/pull/N/head` with no approval step. Forgejo 10.0.3
+  has no equivalent of GitHub's "require approval for first-time contributors" gate.
+  That is the intended behaviour here — it is the point of running CI on PRs — but it
+  means the isolation above has to be real rather than assumed, and it is why
+  `valid_volumes` is empty rather than merely narrow.
 
 ## Known gap: no notification on failure
 

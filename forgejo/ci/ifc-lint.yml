@@ -1,0 +1,50 @@
+# Schema/rule validation for every IFC model in the repo.
+#
+# Ported from a GitHub Actions workflow. The setup steps are gone because
+# ifc-ci already contains ifcopenshell -- on GitHub, setup-python and
+# `pip install ifcopenshell` were most of every run.
+#
+# Copy to .forgejo/workflows/ in your model repository and change the image to
+# your own registry/owner.
+#
+# `runs-on: ifc` is the runner's LABEL; ifc-ci is the IMAGE. They are different
+# names -- see ci/runner-config.yaml.
+#
+# The runner's root-owned config.yaml has an empty `valid_volumes`, so a job
+# here can mount no host path at all. That is what makes it safe to run an
+# outside contributor's pull request.
+
+name: IFC Validation
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-ifc:
+    runs-on: ifc
+    container:
+      image: forge.example.org/OWNER/ifc-ci:latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run IFC lint checks
+        # shell: bash is REQUIRED, not decoration. The runner executes `run:`
+        # blocks with /bin/sh (dash) unless told otherwise, so the GitHub
+        # original's `shopt -s globstar` dies with "shopt: not found" and
+        # exit 127 before the first file is checked. `[[ ]]` and arrays need
+        # bash too.
+        shell: bash
+        # Gates on its own exit status: ifcopenshell.validate calls sys.exit()
+        # on failure, so `set -e` fails the job.
+        run: |
+          set -e
+          shopt -s globstar nullglob
+          for file in **/*.ifc; do
+            # libraries/ holds vendored component sources, not deliverable models.
+            [[ "$file" == libraries/* ]] && continue
+            echo "Validating $file..."
+            python3 -m ifcopenshell.validate --rules "$file"
+          done

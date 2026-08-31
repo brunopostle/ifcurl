@@ -1,0 +1,33 @@
+[Unit]
+Description=Forgejo Actions runner (ifc)
+Documentation=https://forgejo.org/docs/latest/admin/actions/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# A dedicated unprivileged user with no shell. Create with:
+#   useradd --create-home --shell /usr/sbin/nologin ci-ifc
+#   loginctl enable-linger ci-ifc
+# 1001 below is that user's uid -- check with `id -u ci-ifc` and edit to match.
+User=ci-ifc
+Group=ci-ifc
+WorkingDirectory=/var/lib/forgejo-runner/ifc
+Environment=HOME=/home/ci-ifc
+Environment=XDG_RUNTIME_DIR=/run/user/1001
+Environment=DOCKER_HOST=unix:///run/user/1001/podman/podman.sock
+ExecStart=/usr/local/bin/forgejo-runner daemon --config /var/lib/forgejo-runner/ifc/config.yaml
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=5m
+KillMode=mixed
+
+# Hardening: the runner needs its own state dir and the podman socket, nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/lib/forgejo-runner/ifc /home/ci-ifc
+
+[Install]
+WantedBy=multi-user.target

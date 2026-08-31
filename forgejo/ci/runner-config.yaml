@@ -1,0 +1,71 @@
+# forgejo-runner config for an IFC validation runner.
+#
+# Install to /var/lib/forgejo-runner/ifc/config.yaml and leave it ROOT-OWNED 0644.
+# That ownership is the whole enforcement model: `valid_volumes` below is the
+# allowlist of host paths a job may bind-mount, and a workflow cannot widen a
+# file it cannot write. If the runner user owns this file, a compromised job that
+# gets code execution as that user can rewrite it and mount anything.
+#
+# Replace forge.example.org/OWNER with your own registry/owner.
+log:
+  level: info
+  job_level: info
+
+runner:
+  file: .runner
+  capacity: 1            # one job at a time; raise only if the box can take it
+  timeout: 1h
+  shutdown_timeout: 30m
+  insecure: false        # keep false: verifies the Forgejo instance's TLS
+  fetch_timeout: 5s
+  fetch_interval: 2s
+  report_interval: 1s
+  labels:
+    # LABEL:docker://IMAGE -- `ifc` is what a workflow asks for with `runs-on:`,
+    # and the image is what it gets. These are two different names; confusing
+    # them is a common first mistake. The label here must match the --labels
+    # argument given to `forgejo-runner register`, or the runner will not
+    # advertise it.
+    - "ifc:docker://forge.example.org/OWNER/ifc-ci:latest"
+
+cache:
+  enabled: true
+  dir: ""
+  host: ""
+  port: 0
+
+container:
+  network: ""
+  enable_ipv6: false
+  privileged: false      # never true for a runner that accepts outside PRs
+
+  # RESOURCE LIMITS: set these. Nothing else caps a job.
+  # Without them one runaway loop or oversized model can exhaust the RAM and
+  # disk of the machine that also serves your Forgejo instance. Because this
+  # file is root-owned, a workflow cannot lift what you set here. Choose
+  # deliberately -- too low and legitimate builds get OOM-killed.
+  #   options: "--memory=2g --cpus=1.5 --pids-limit=512"
+  options:
+
+  workdir_parent:
+
+  # ENFORCEMENT POINT. Empty means a job may bind-mount NO host path at all,
+  # which is what makes it safe to run an outside contributor's pull request.
+  # These validation checks need no host access whatsoever -- keep it empty.
+  valid_volumes:
+    []
+
+  # Rootless podman socket for the user this runner runs as. 1001 is that
+  # user's uid -- check yours with `id -u <runner-user>` and edit to match.
+  docker_host: "unix:///run/user/1001/podman/podman.sock"
+
+  # false = use the image already in the runner user's own local store, so the
+  # runner has no registry dependency at job time and needs no credentials.
+  # The cost: after every image rebuild you must reload it into that store --
+  # see "Rebuilding the image" in CI.md. Set true if you push to a registry.
+  force_pull: false
+
+  force_rebuild: false
+
+host:
+  workdir_parent:
