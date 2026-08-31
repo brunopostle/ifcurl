@@ -140,7 +140,7 @@ systemctl is-active ifcurl-api.service forgejo
 
 **19 — OpenCDE document picker (select-documents).** With `IFCURL_OAUTH2_CLIENT_ID` and `IFCURL_OAUTH2_CLIENT_SECRET` set, POST to `http://localhost:8000/documents/1.0/select-documents` with body `{"callback": {"url": "http://localhost:9999/cb"}}`. The response should contain a `select_documents_url`. Open that URL in a browser — the picker should list Forgejo repositories. Select one, navigate directories, click an `.ifc` file — the browser should redirect to `http://localhost:9999/cb?document_ids[]=<base64url-id>`.
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ccf33ec3 -->
 ## Beads Issue Tracker
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
@@ -159,6 +159,8 @@ bd close <id>         # Complete work
 - Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
 - Run `bd prime` for detailed command reference and session close protocol
 - Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+
+**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 
 ## Session Completion
 
