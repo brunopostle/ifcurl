@@ -1,0 +1,112 @@
+# IDS compliance: every rule in every IDS/**/*.ids, against every model.
+#
+# Ported from a GitHub Actions workflow. The setup steps are gone because
+# ifc-ci already contains ifctester, idssplit and their dependencies.
+#
+# idssplit splits each IDS file into one file per rule before testing, so a
+# failure names the specific rule rather than only the specification.
+#
+# Copy to .forgejo/workflows/ in your model repository and change the image to
+# your own registry/owner.
+#
+# `runs-on: ifc` is the runner's LABEL; ifc-ci is the IMAGE. They are different
+# names -- see ci/runner-config.yaml.
+#
+# The runner's root-owned config.yaml has an empty `valid_volumes`, so no host
+# path can be mounted, which is what makes it safe for an outside PR.
+
+name: IDS Compliance Check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ids-lint:
+    runs-on: ifc
+    container:
+      image: forge.example.org/OWNER/ifc-ci:latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run IDS validations
+        # shell: bash is REQUIRED, not decoration. The runner executes `run:`
+        # blocks with /bin/sh (dash) unless told otherwise, so the GitHub
+        # original's `shopt -s globstar` dies with "shopt: not found" and
+        # exit 127 before the first file is checked. `[[ ]]` and arrays need
+        # bash too.
+        shell: bash
+        # Deliberately greps output instead of trusting the exit status:
+        # ifctester's CLI has no sys.exit anywhere, so a model that violates
+        # every rule still exits 0. A naive `run: ifctester ...` would be a
+        # permanently green check that can never fail.
+        run: |
+          set -e
+          shopt -s globstar nullglob
+
+          if [ ! -d IDS ]; then
+            echo "No IDS/ folder found"
+            exit 0
+          fi
+
+          ids_sources=(IDS/**/*.ids)
+
+          if [ ${#ids_sources[@]} -eq 0 ]; then
+            echo "No IDS files found in IDS/ folder"
+            exit 0
+          fi
+
+          # libraries/ holds vendored component sources, not deliverable models.
+          ifc_files=()
+          for f in **/*.ifc; do
+            [[ "$f" == libraries/* ]] && continue
+            ifc_files+=("$f")
+          done
+
+          if [ ${#ifc_files[@]} -eq 0 ]; then
+            echo "No IFC files found"
+            exit 0
+          fi
+
+          mkdir -p split_ids
+
+          echo "Splitting IDS files..."
+          for ids in "${ids_sources[@]}"; do
+            idssplit "$ids" split_ids/
+          done
+
+          split_ids_files=(split_ids/*.ids)
+          if [ ${#split_ids_files[@]} -eq 0 ]; then
+            echo "No rules found after splitting IDS files"
+            exit 1
+          fi
+
+          echo "Running ifctester validations..."
+          failed=0
+
+          for rule_ids in "${split_ids_files[@]}"; do
+            for ifc in "${ifc_files[@]}"; do
+              echo "::group::Test: $rule_ids with $ifc"
+              echo "Testing: $rule_ids with $ifc"
+              output=$(python3 -m ifctester --no-color "$rule_ids" "$ifc" || true)
+              echo "$output"
+              echo "::endgroup::"
+
+              if echo "$output" | grep -q '\[FAIL\]'; then
+                echo "FAIL: $rule_ids with $ifc"
+                failed=1
+              else
+                echo "PASS: $rule_ids with $ifc"
+              fi
+            done
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more validations failed"
+            exit 1
+          else
+            echo "All validations passed"
+          fi

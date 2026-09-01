@@ -49,6 +49,11 @@ forgejo/
     ifcurl-render.service               ← systemd unit for the render isolation service
     gitconfig-ifcmerge                  ← git merge driver registration for /etc/gitconfig
     gitattributes                       ← system-wide gitattributes for bare repos
+  ci/
+    ifc-ci.Containerfile                ← CI image: ifcopenshell, ifctester, idssplit
+    runner-config.yaml                  ← forgejo-runner config (root-owned; isolation lives here)
+    forgejo-runner-ifc.service          ← systemd unit for the runner
+    ifc-lint.yml, ids-lint.yml          ← workflows for .forgejo/workflows/ in a model repo
 ```
 
 ---
@@ -56,6 +61,16 @@ forgejo/
 ## Local setup (Windows + Docker)
 
 For a self-contained local deployment of Forgejo + ifcurl on Windows using Docker, see [SETUP_LOCAL.md](SETUP_LOCAL.md).
+
+---
+
+## Continuous integration
+
+For validating IFC models on push and pull request — schema/rule checks with
+`ifcopenshell.validate` and IDS compliance with `ifctester` — see [CI.md](CI.md), with
+the files to copy in [`ci/`](ci/). Covers enabling Forgejo Actions, the CI image, running
+a runner as an unprivileged user, and what the sandbox does and does not contain. In
+production since 2026-08-31.
 
 ---
 

@@ -359,6 +359,7 @@ node --test tests/test_viewer_url.mjs
 | 7 — OpenCDE Foundation API | ✓ done | Discovery endpoint + OAuth2 proxy (Foundation API 1.1) |
 | 8 — OpenCDE BCF API | ✓ done | BCF 3.0 REST API — connect Revit, Navisworks, Solibri directly |
 | 9 — OpenCDE Documents API | ✓ done | Document versions + select-documents picker |
+| 10 — CI for IFC repositories | planned | Forgejo Actions: schema/rule validation + IDS compliance ([forgejo/CI.md](forgejo/CI.md)) |
 
 Development tasks are tracked with [beads](https://github.com/brunopostle/beads): `bd ready`.
 
