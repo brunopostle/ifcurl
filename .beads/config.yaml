@@ -53,6 +53,7 @@
 # - github.org
 # - github.repo
 
-sync.remote: "git+ssh://git@github.com/brunopostle/ifcurl.git"
 export:
     auto: false
+sync:
+    remote: "git+ssh://git@github.com/brunopostle/ifcurl.git"
