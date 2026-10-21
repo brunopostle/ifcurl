@@ -16,3 +16,6 @@ dev/gitea-data/
 *.tmp.*
 hub.postle.net.txt
 CLOUD_SYNC_PROTOCOL.md
+
+# beads gate lock (runtime)
+.beads.gate.lock
