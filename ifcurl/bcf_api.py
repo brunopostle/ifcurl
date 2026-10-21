@@ -47,7 +47,6 @@ from fastapi.responses import JSONResponse, Response
 
 from ifcurl.bcf import bcf_viewpoint_to_ifc_url, ifc_url_to_bcf_viewpoint
 from ifcurl.url import IfcUrl
-from ifcurl.auth import get_token_for_host
 
 # ---------------------------------------------------------------------------
 # Config
@@ -365,19 +364,22 @@ def get_snapshot(owner: str, repo: str, tguid: str, vpguid: str, request: Reques
     if not ifc_url_str:
         raise HTTPException(status_code=404, detail="No ifc:// URL in viewpoint comment")
     # Validate the stored ifc:// URL against SSRF rules before fetching.
-    # The caller's bearer token must NOT be forwarded to the preview service —
-    # it would then be sent to the git host named in the comment, which may be
-    # attacker-controlled. Use the server-side token for the ifc:// host instead.
+    # The URL may name any repo, so the preview service must check the caller's
+    # own access to it.  Forward the caller's Authorization header (used only
+    # for that check against the co-located Forgejo, never sent to the git
+    # host) rather than a ``token`` param, which would be sent to whatever git
+    # host the comment names.
     try:
         ifc_url = IfcUrl.parse(ifc_url_str)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Invalid ifc:// URL in viewpoint: {exc}") from exc
     _ssrf_check(ifc_url)
-    server_token = get_token_for_host(ifc_url.host) if ifc_url.host else None
-    params: dict = {"url": ifc_url_str}
-    if server_token:
-        params["token"] = server_token
-    r = httpx.get(f"{_PREVIEW_URL}/preview", params=params, timeout=120)
+    r = httpx.get(
+        f"{_PREVIEW_URL}/preview",
+        params={"url": ifc_url_str},
+        headers={"Authorization": auth} if auth else {},
+        timeout=120,
+    )
     if r.status_code != 200:
         raise HTTPException(status_code=r.status_code, detail="Preview service error")
     return Response(content=r.content, media_type="image/png")

@@ -52,7 +52,7 @@ from fastapi.responses import JSONResponse, Response
 from platformdirs import user_cache_dir
 from pydantic import BaseModel
 
-from ifcurl.auth import get_token_for_host
+from ifcurl.access import is_forgejo_host, resolve_fetch_token
 from ifcurl.bcf_api import router as bcf_router
 from ifcurl.documents_api import router as documents_router
 from ifcurl.foundation_api import router as foundation_router
@@ -440,6 +440,30 @@ def _t4m_put(url: str, png: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Viewer access (see ifcurl.access)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_token(ifc_url: IfcUrl, explicit_token: str | None, http_request: Request) -> str | None:
+    """Check the caller can read *ifc_url*'s repo and return the git token to use.
+
+    Raises 404 when the co-located Forgejo denies the caller.  Must run before
+    any render-cache lookup so cached private renders are never served.
+    """
+    return resolve_fetch_token(
+        ifc_url,
+        explicit_token,
+        http_request.headers.get("authorization"),
+        http_request.headers.get("cookie"),
+    )
+
+
+def _cache_scope(*urls: IfcUrl) -> str:
+    """Return ``private`` for repos whose access depends on the caller, else ``public``."""
+    return "private" if any(is_forgejo_host(u.host) for u in urls) else "public"
+
+
+# ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
 
@@ -449,9 +473,9 @@ class PreviewRequest(BaseModel):
     token: str | None = None
     """Optional bearer token for git authentication.
 
-    When provided, takes precedence over any token configured in
-    ``~/.config/ifcurl/tokens.json``.  Intended for co-located Gitea
-    deployments that pass the requesting user's session token.
+    When provided it is used as-is for the git fetch, never replaced by a
+    token from ``tokens.json``.  On the co-located Forgejo it must itself
+    grant read access to the repo (see :mod:`ifcurl.access`).
     """
 
 
@@ -485,7 +509,7 @@ class DiffRequest(BaseModel):
 
 
 @app.get("/preview")
-def preview_get(url: str, token: str | None = None) -> Response:
+def preview_get(http_request: Request, url: str, token: str | None = None) -> Response:
     """GET variant of POST /preview for use in HTML ``<img src>`` tags.
 
     The ``url`` query parameter is the ifc:// URL to render.  The optional
@@ -493,11 +517,11 @@ def preview_get(url: str, token: str | None = None) -> Response:
     mirroring the JSON body ``token`` field of POST /preview.  All caching
     and authentication behaviour is otherwise identical to the POST endpoint.
     """
-    return preview(PreviewRequest(url=url, token=token))
+    return preview(PreviewRequest(url=url, token=token), http_request)
 
 
 @app.post("/preview")
-def preview(request: PreviewRequest) -> Response:
+def preview(request: PreviewRequest, http_request: Request) -> Response:
     """Render an ifc:// URL to a PNG image.
 
     Returns ``image/png``.  For immutable refs the result is cached on disk
@@ -515,6 +539,10 @@ def preview(request: PreviewRequest) -> Response:
     # --- SSRF protection ---
     _ssrf_check(ifc_url)
 
+    # --- Viewer access check + authentication token (before any cache) ---
+    token = _fetch_token(ifc_url, request.token, http_request)
+    scope = _cache_scope(ifc_url)
+
     # --- Tier 4 / 4m: cached PNG ---
     if ifc_url.is_mutable_ref():
         t4m_hit = _t4m_get(request.url)
@@ -523,7 +551,7 @@ def preview(request: PreviewRequest) -> Response:
             return Response(
                 content=cached_png,
                 media_type="image/png",
-                headers={"Cache-Control": f"public, max-age={remaining}"},
+                headers={"Cache-Control": f"{scope}, max-age={remaining}"},
             )
     else:
         cached_png = _t4_get(request.url)
@@ -531,13 +559,8 @@ def preview(request: PreviewRequest) -> Response:
             return Response(
                 content=cached_png,
                 media_type="image/png",
-                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+                headers={"Cache-Control": f"{scope}, max-age=31536000, immutable"},
             )
-
-    # --- Resolve authentication token ---
-    token = request.token
-    if token is None and ifc_url.host:
-        token = get_token_for_host(ifc_url.host)
 
     # --- Fetch IFC bytes + commit hexsha ---
     try:
@@ -616,7 +639,7 @@ def preview(request: PreviewRequest) -> Response:
         return Response(
             content=png_bytes,
             media_type="image/png",
-            headers={"Cache-Control": f"public, max-age={_T4M_TTL}", **extra_headers},
+            headers={"Cache-Control": f"{scope}, max-age={_T4M_TTL}", **extra_headers},
         )
     else:
         _t4_put(request.url, png_bytes)
@@ -624,20 +647,20 @@ def preview(request: PreviewRequest) -> Response:
             content=png_bytes,
             media_type="image/png",
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
+                "Cache-Control": f"{scope}, max-age=31536000, immutable",
                 **extra_headers,
             },
         )
 
 
 @app.get("/select")
-def select_get(url: str, token: str | None = None) -> JSONResponse:
+def select_get(http_request: Request, url: str, token: str | None = None) -> JSONResponse:
     """GET variant of POST /select."""
-    return select(SelectRequest(url=url, token=token))
+    return select(SelectRequest(url=url, token=token), http_request)
 
 
 @app.post("/select")
-def select(request: SelectRequest) -> JSONResponse:
+def select(request: SelectRequest, http_request: Request) -> JSONResponse:
     """Resolve an ifc:// URL selector to a list of element GlobalIds.
 
     Returns ``{"guids": [...]}`` JSON.  The selector must be present in the
@@ -655,9 +678,7 @@ def select(request: SelectRequest) -> JSONResponse:
 
     _ssrf_check(ifc_url)
 
-    token = request.token
-    if token is None and ifc_url.host:
-        token = get_token_for_host(ifc_url.host)
+    token = _fetch_token(ifc_url, request.token, http_request)
 
     try:
         hexsha, ifc_bytes, _ = fetch_ifc(ifc_url, token=token)
@@ -696,13 +717,13 @@ def select(request: SelectRequest) -> JSONResponse:
 
 
 @app.get("/query")
-def query_get(url: str, token: str | None = None) -> JSONResponse:
+def query_get(http_request: Request, url: str, token: str | None = None) -> JSONResponse:
     """GET variant of POST /query."""
-    return query(QueryRequest(url=url, token=token))
+    return query(QueryRequest(url=url, token=token), http_request)
 
 
 @app.post("/query")
-def query(request: QueryRequest) -> JSONResponse:
+def query(request: QueryRequest, http_request: Request) -> JSONResponse:
     """Retrieve a property or attribute value for each element matched by the selector.
 
     The URL must contain both ``selector=`` and ``query=`` parameters.  The
@@ -741,9 +762,7 @@ def query(request: QueryRequest) -> JSONResponse:
 
     _ssrf_check(ifc_url)
 
-    token = request.token
-    if token is None and ifc_url.host:
-        token = get_token_for_host(ifc_url.host)
+    token = _fetch_token(ifc_url, request.token, http_request)
 
     try:
         hexsha, ifc_bytes, _ = fetch_ifc(ifc_url, token=token)
@@ -777,13 +796,13 @@ def query(request: QueryRequest) -> JSONResponse:
 
 
 @app.get("/clash")
-def clash_get(url: str, token: str | None = None) -> JSONResponse:
+def clash_get(http_request: Request, url: str, token: str | None = None) -> JSONResponse:
     """GET variant of POST /clash."""
-    return clash(ClashRequest(url=url, token=token))
+    return clash(ClashRequest(url=url, token=token), http_request)
 
 
 @app.post("/clash")
-def clash(request: ClashRequest) -> JSONResponse:
+def clash(request: ClashRequest, http_request: Request) -> JSONResponse:
     """Detect geometric clashes within the elements matched by the selector.
 
     The URL's ``selector=`` parameter defines the set of elements to test
@@ -802,9 +821,7 @@ def clash(request: ClashRequest) -> JSONResponse:
 
     _ssrf_check(ifc_url)
 
-    token = request.token
-    if token is None and ifc_url.host:
-        token = get_token_for_host(ifc_url.host)
+    token = _fetch_token(ifc_url, request.token, http_request)
 
     try:
         hexsha, ifc_bytes, _ = fetch_ifc(ifc_url, token=token)
@@ -880,18 +897,18 @@ def foundation_versions(request: Request) -> JSONResponse:
 
 
 @app.get("/render_diff")
-def render_diff_get(base: str, head: str, token: str | None = None) -> Response:
+def render_diff_get(http_request: Request, base: str, head: str, token: str | None = None) -> Response:
     """GET variant of POST /render_diff for use in HTML ``<img src>`` tags.
 
     *base* and *head* are ifc:// URLs (URL-encoded) for the base and head
     commits of the same IFC file.  The optional *token* is a bearer token
     for private-repository access.
     """
-    return render_diff(DiffRequest(base=base, head=head, token=token))
+    return render_diff(DiffRequest(base=base, head=head, token=token), http_request)
 
 
 @app.post("/render_diff")
-def render_diff(request: DiffRequest) -> Response:
+def render_diff(request: DiffRequest, http_request: Request) -> Response:
     """Render a two-pass IFC diff image (green=added, blue=modified, red=removed).
 
     Both URLs must refer to the same IFC file path in the same repository.
@@ -921,6 +938,11 @@ def render_diff(request: DiffRequest) -> Response:
     _ssrf_check(base_url)
     _ssrf_check(head_url)
 
+    # --- Viewer access check (both URLs, before any cache) ---
+    base_token = _fetch_token(base_url, request.token, http_request)
+    head_token = _fetch_token(head_url, request.token, http_request)
+    scope = _cache_scope(base_url, head_url)
+
     # --- Tier 4: cached diff PNG (immutable refs only) ---
     both_immutable = not base_url.is_mutable_ref() and not head_url.is_mutable_ref()
     cache_key = f"diff:{request.base}:{request.head}"
@@ -930,18 +952,13 @@ def render_diff(request: DiffRequest) -> Response:
             return Response(
                 content=cached_png,
                 media_type="image/png",
-                headers={"Cache-Control": "public, max-age=31536000, immutable"},
+                headers={"Cache-Control": f"{scope}, max-age=31536000, immutable"},
             )
-
-    # --- Resolve authentication token ---
-    token = request.token
-    if token is None and base_url.host:
-        token = get_token_for_host(base_url.host)
 
     # --- Fetch IFC bytes for both commits ---
     try:
-        base_hexsha, base_bytes, base_stale = fetch_ifc(base_url, token=token)
-        head_hexsha, head_bytes, head_stale = fetch_ifc(head_url, token=token)
+        base_hexsha, base_bytes, base_stale = fetch_ifc(base_url, token=base_token)
+        head_hexsha, head_bytes, head_stale = fetch_ifc(head_url, token=head_token)
     except ImportError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
@@ -966,7 +983,7 @@ def render_diff(request: DiffRequest) -> Response:
 
     # --- Get git diff text ---
     try:
-        raw_diff = git_diff_text(base_url, head_url, token=token)
+        raw_diff = git_diff_text(base_url, head_url, token=base_token)
     except (ImportError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Could not diff: {exc}") from exc
 
@@ -1016,7 +1033,7 @@ def render_diff(request: DiffRequest) -> Response:
             content=png_bytes,
             media_type="image/png",
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
+                "Cache-Control": f"{scope}, max-age=31536000, immutable",
                 **diff_stale_headers,
             },
         )

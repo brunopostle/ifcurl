@@ -307,6 +307,16 @@ For private repositories, configure tokens per host in `~/.config/ifcurl/tokens.
 { "hosts": { "github.com": "ghp_…", "gitlab.example.com": "glpat_…" } }
 ```
 
+The CLI uses these tokens directly. **In `ifcurl serve` a stored token is never a grant to the caller:** it is only a fetch credential for the co-located Forgejo, and it is used only after Forgejo confirms that the *requesting user* can read the repo. For every ifc:// URL on that host, the service asks Forgejo first, before any cache lookup. It forwards the caller's session cookie to the `/<owner>/<repo>` web route, or the caller's `Authorization` header (or explicit `token` parameter) to `/api/v1/repos/<owner>/<repo>`. Denied requests get a 404. The service never uses a stored token for any other host; it fetches anonymously unless the caller supplies a token. Configure the check with:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `IFCURL_FORGEJO_URL` | `http://localhost:3000` | internal URL the access check is sent to |
+| `IFCURL_FORGEJO_HOSTS` | host of `IFCURL_FORGEJO_URL` | comma-separated `host[:port]` values that ifc:// URLs use for that Forgejo, e.g. `git.example.com` |
+| `IFCURL_ACCESS_TTL` | `30` | seconds to cache each allow/deny decision per session and repo (`0` disables) |
+
+For the check to see the session cookie, the service endpoints must be served on the same origin as Forgejo (see `forgejo/server-config/nginx-ifcurl.conf`).
+
 **systemd deployment:** the service user typically has no home directory (`ProtectHome=yes`), so `~/.config` is inaccessible. The recommended approach for a server is a dedicated read-only Forgejo account (e.g. `ifcurl-bot`) added as a member of any private repositories that should be renderable. Generate an API token for that account and configure it as follows.
 
 Set `XDG_CONFIG_HOME` to a readable path in the environment file (e.g. `/etc/ifcurl/env`) and ensure the file is readable by the service user:
@@ -320,11 +330,12 @@ chown root:ifcurl /etc/ifcurl/env
 chmod 640 /etc/ifcurl/env
 ```
 
-Then create `/etc/ifcurl/ifcurl/tokens.json` with the service account token:
+Then create `/etc/ifcurl/ifcurl/tokens.json` with the service account token. The host key must also be listed in `IFCURL_FORGEJO_HOSTS` (or match `IFCURL_FORGEJO_URL`), or the service will not use the token:
 
 ```bash
 mkdir -p /etc/ifcurl/ifcurl
 echo '{"hosts":{"git.example.com":"<service-account-token>"}}' > /etc/ifcurl/ifcurl/tokens.json
+echo 'IFCURL_FORGEJO_HOSTS=git.example.com' >> /etc/ifcurl/env
 chown root:ifcurl /etc/ifcurl/ifcurl/tokens.json
 chmod 640 /etc/ifcurl/ifcurl/tokens.json
 systemctl restart ifcurl-api

@@ -317,9 +317,11 @@ class TestAuthentication:
 
         assert received_token == ["mytoken123"]
 
-    def test_config_token_used_when_no_request_token(
+    def test_config_token_not_used_for_non_forgejo_host(
         self, model_with_geometry, monkeypatch
     ):
+        """The stored token is never a grant to the caller: without a Forgejo
+        access check it must not be used (ifcurl-6ow)."""
         ifc_bytes = model_with_geometry.to_string().encode()
         received_token = []
 
@@ -328,7 +330,7 @@ class TestAuthentication:
             return FAKE_HEXSHA, ifc_bytes, False
 
         monkeypatch.setattr(
-            "ifcurl.service.get_token_for_host", lambda host: "config_token"
+            "ifcurl.access.get_token_for_host", lambda host: "config_token"
         )
         with (
             patch("ifcurl.service.fetch_ifc", capturing_fetch),
@@ -336,7 +338,7 @@ class TestAuthentication:
         ):
             client.post("/preview", json={"url": MUTABLE_URL})
 
-        assert received_token == ["config_token"]
+        assert received_token == [None]
 
     def test_request_token_overrides_config_token(
         self, model_with_geometry, monkeypatch
@@ -349,7 +351,7 @@ class TestAuthentication:
             return FAKE_HEXSHA, ifc_bytes, False
 
         monkeypatch.setattr(
-            "ifcurl.service.get_token_for_host", lambda host: "config_token"
+            "ifcurl.access.get_token_for_host", lambda host: "config_token"
         )
         with (
             patch("ifcurl.service.fetch_ifc", capturing_fetch),
@@ -548,6 +550,8 @@ class TestSSRF:
         configure_allowed_hosts({"localhost:3000"})
         ifc_bytes = model_with_geometry.to_string().encode()
         with (
+            # localhost:3000 is the default co-located Forgejo; grant access.
+            patch("ifcurl.access.viewer_can_read", return_value=True),
             patch("ifcurl.service.fetch_ifc", _mock_fetch(ifc_bytes)),
             patch("ifcurl.render.render", return_value=FAKE_PNG),
         ):
