@@ -256,6 +256,47 @@ class TestNonForgejoHost:
         assert forgejo.calls == []
         assert r.headers["cache-control"].startswith("public")
 
+    @pytest.mark.parametrize(
+        "path,params",
+        [
+            ("/preview", {"url": "ifc://other.example.com/org/repo@heads/main?path=model.ifc"}),
+            ("/select", {"url": "ifc://other.example.com/org/repo@heads/main?path=model.ifc&selector=IfcWall"}),
+            (
+                "/render_diff",
+                {
+                    "base": f"ifc://other.example.com/org/repo@{FAKE_HEXSHA}?path=model.ifc",
+                    "head": f"ifc://other.example.com/org/repo@{OTHER_HEXSHA}?path=model.ifc",
+                },
+            ),
+        ],
+    )
+    def test_explicit_token_refused(self, forgejo, path, params):
+        """Caches are keyed without credentials, so a token-fetched render would
+        be served to later anonymous callers (ifcurl-e78)."""
+        with patch("ifcurl.service.fetch_ifc", _no_fetch):
+            r = _get(path, token="secret", **params)
+        assert r.status_code == 400
+
+    def test_explicit_token_refused_even_when_cached(self, forgejo):
+        url = f"ifc://other.example.com/org/repo@{FAKE_HEXSHA}?path=model.ifc"
+        _t4_put(url, FAKE_PNG)
+        assert _get("/preview", url=url, token="secret").status_code == 400
+
+    def test_ssh_transport_refused(self, forgejo):
+        """The service's SSH key is a standing credential like the stored token."""
+        url = f"ifc://git@other.example.com/org/repo@{FAKE_HEXSHA}?path=model.ifc"
+        _t4_put(url, FAKE_PNG)
+        with patch("ifcurl.service.fetch_ifc", _no_fetch):
+            r = _get("/preview", url=url)
+        assert r.status_code == 403
+        assert r.content != FAKE_PNG
+
+    def test_ssh_transport_allowed_on_forgejo_after_check(self, forgejo):
+        url = f"ifc://git@{HOST}/org/private@{FAKE_HEXSHA}?path=model.ifc"
+        _t4_put(url, FAKE_PNG)
+        assert _get("/preview", url=url).status_code == 404
+        assert _get("/preview", cookie=ALICE_COOKIE, url=url).status_code == 200
+
 
 # ---------------------------------------------------------------------------
 # /render_diff

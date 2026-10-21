@@ -33,9 +33,12 @@ the repo, so Forgejo stays the sole authority on permissions:
 2xx means allowed; anything else (404, 403, redirect to ``/user/login``) is
 answered with 404 so the response does not reveal that a private repo exists.
 
-For hosts that are not the co-located Forgejo no check is possible, so the
-stored token is never used: the fetch is anonymous unless the caller supplied
-a token of their own.
+For hosts that are not the co-located Forgejo no check is possible, so every
+fetch is anonymous: the stored token is never used, a caller-supplied token is
+refused (400) and SSH transport is refused (403), since the service's SSH key
+is a standing credential too.  The render cache and the bare-repo cache are
+keyed without any credential, so this keeps them holding only content that
+any caller could fetch anyway.
 
 Configuration
 -------------
@@ -151,9 +154,20 @@ def resolve_fetch_token(
     On the co-located Forgejo every request is checked, including those with
     an explicit token: cached renders and the shared bare-repo cache would
     otherwise serve private content to any caller presenting a bogus token.
+    Elsewhere only anonymous fetches are allowed (see module docstring).
     """
     if not ifc_url.host or not is_forgejo_host(ifc_url.host):
-        return explicit_token
+        if explicit_token is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="A token is only accepted for the co-located Forgejo host",
+            )
+        if ifc_url.transport == "ssh":
+            raise HTTPException(
+                status_code=403,
+                detail="SSH transport is only permitted for the co-located Forgejo host",
+            )
+        return None
     if explicit_token is not None:
         authorization = f"token {explicit_token}"
     if not viewer_can_read(ifc_url, authorization, cookie):

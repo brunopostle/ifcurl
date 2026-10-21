@@ -300,8 +300,20 @@ class TestTier4Cache:
 # ---------------------------------------------------------------------------
 
 
+# localhost:3000 is the default co-located Forgejo, the only host that accepts tokens.
+FORGEJO_MUTABLE_URL = "ifc://localhost:3000/org/repo@heads/main?path=model.ifc"
+
+
+@pytest.fixture
+def forgejo_allows():
+    """Allow the co-located Forgejo host and grant the caller read access."""
+    configure_allowed_hosts({"localhost:3000"})
+    with patch("ifcurl.access.viewer_can_read", return_value=True):
+        yield
+
+
 class TestAuthentication:
-    def test_request_token_passed_to_fetch_ifc(self, model_with_geometry):
+    def test_request_token_passed_to_fetch_ifc(self, model_with_geometry, forgejo_allows):
         ifc_bytes = model_with_geometry.to_string().encode()
         received_token = []
 
@@ -313,7 +325,7 @@ class TestAuthentication:
             patch("ifcurl.service.fetch_ifc", capturing_fetch),
             patch("ifcurl.render.render", return_value=FAKE_PNG),
         ):
-            client.post("/preview", json={"url": MUTABLE_URL, "token": "mytoken123"})
+            client.post("/preview", json={"url": FORGEJO_MUTABLE_URL, "token": "mytoken123"})
 
         assert received_token == ["mytoken123"]
 
@@ -341,7 +353,7 @@ class TestAuthentication:
         assert received_token == [None]
 
     def test_request_token_overrides_config_token(
-        self, model_with_geometry, monkeypatch
+        self, model_with_geometry, monkeypatch, forgejo_allows
     ):
         ifc_bytes = model_with_geometry.to_string().encode()
         received_token = []
@@ -357,7 +369,7 @@ class TestAuthentication:
             patch("ifcurl.service.fetch_ifc", capturing_fetch),
             patch("ifcurl.render.render", return_value=FAKE_PNG),
         ):
-            client.post("/preview", json={"url": MUTABLE_URL, "token": "request_token"})
+            client.post("/preview", json={"url": FORGEJO_MUTABLE_URL, "token": "request_token"})
 
         assert received_token == ["request_token"]
 
@@ -387,7 +399,7 @@ class TestGetEndpoint:
         r = client.get("/preview", params={"url": "ifc:///some/path@HEAD?path=m.ifc"})
         assert r.status_code == 403
 
-    def test_get_accepts_token_param(self, model_with_geometry):
+    def test_get_accepts_token_param(self, model_with_geometry, forgejo_allows):
         ifc_bytes = model_with_geometry.to_string().encode()
         received = {}
 
@@ -399,7 +411,7 @@ class TestGetEndpoint:
             patch("ifcurl.service.fetch_ifc", mock_fetch),
             patch("ifcurl.render.render", return_value=FAKE_PNG),
         ):
-            r = client.get("/preview", params={"url": MUTABLE_URL, "token": "mytoken"})
+            r = client.get("/preview", params={"url": FORGEJO_MUTABLE_URL, "token": "mytoken"})
         assert r.status_code == 200
         assert received["token"] == "mytoken"
 

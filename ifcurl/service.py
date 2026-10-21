@@ -474,8 +474,9 @@ class PreviewRequest(BaseModel):
     """Optional bearer token for git authentication.
 
     When provided it is used as-is for the git fetch, never replaced by a
-    token from ``tokens.json``.  On the co-located Forgejo it must itself
-    grant read access to the repo (see :mod:`ifcurl.access`).
+    token from ``tokens.json``.  Only accepted for the co-located Forgejo,
+    where it must itself grant read access to the repo (see
+    :mod:`ifcurl.access`).
     """
 
 
