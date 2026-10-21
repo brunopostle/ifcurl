@@ -55,4 +55,4 @@
 
 sync.remote: "git+ssh://git@github.com/brunopostle/ifcurl.git"
 export:
-    auto: true
+    auto: false
